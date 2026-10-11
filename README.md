@@ -49,6 +49,30 @@ To try the parent flow, create a **Parent** account and add a child from the **C
 
 Optional: set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` before seeding to create a platform super-admin.
 
+### Demo logins
+
+The app has no built-in default accounts. To create a ready-to-use demo school, run this on the server after `npm run build`:
+
+```bash
+npm run setup:demo                              # random passwords, printed once
+DEMO_PASSWORD='YourStrongPass#1' npm run setup:demo   # or choose one password for all demo users
+npm run setup:demo -- --reset-passwords         # issue new passwords for existing demo users
+```
+
+It creates the organization "Demo School" with these logins:
+
+| Email | Role |
+| --- | --- |
+| `admin@demo.aigurukul.test` | Platform super-admin, also owner of Demo School |
+| `principal@demo.aigurukul.test` | School owner |
+| `teacher@demo.aigurukul.test` | Teacher of class 8-A Science, with a live AI lesson ready to start |
+| `student1@…` and `student2@…` | Students enrolled in 8-A Science |
+| `parent@demo.aigurukul.test` | Parent of student1 |
+
+Use `ADMIN_EMAIL=you@yourdomain.com` to choose the admin's email, or `DEMO_EMAIL_DOMAIN` to change the domain for all of them.
+
+The script is safe to run again: existing accounts keep their passwords unless you pass `--reset-passwords`. Change or remove demo accounts before real users join.
+
 ### Live AI classrooms
 
 1. As a school owner or teacher, open **Live Classes**. Create a class, add students, and schedule a live lesson.
