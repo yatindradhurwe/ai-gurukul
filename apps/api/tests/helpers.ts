@@ -1,9 +1,12 @@
 import request from "supertest";
 import { createApp } from "../src/app.js";
-import { pool } from "../src/database/pool.js";
+import { pool, withSystem } from "../src/database/pool.js";
 import { seed } from "../src/database/seeds/seed.js";
 
 export const app = createApp();
+
+/** Direct SQL for test setup/assertions, run as trusted system code (bypasses tenant RLS). */
+export const sql = (text: string, params: unknown[] = []) => withSystem((db) => db.query(text, params));
 
 export const dbAvailable = await pool
   .query("SELECT 1")

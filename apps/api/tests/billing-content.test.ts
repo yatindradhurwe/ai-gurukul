@@ -1,10 +1,9 @@
 /** Subscriptions, quotas, webhooks and content indexing acceptance tests. */
 import request from "supertest";
 import { beforeAll, describe, expect, it } from "vitest";
-import { pool } from "../src/database/pool.js";
 import { hmacSha256Hex } from "../src/lib/crypto.js";
 import { processOutboxBatch } from "../src/jobs/outbox.js";
-import { api, app, dbAvailable, register, resetDb, type Session } from "./helpers.js";
+import { api, app, dbAvailable, register, resetDb, type Session, sql } from "./helpers.js";
 
 const signed = (body: object) => {
   const raw = JSON.stringify(body);
@@ -33,7 +32,7 @@ describe.skipIf(!dbAvailable)("billing, quotas and webhooks", () => {
   const ask = () => api.post(student, `/api/v1/ai/sessions/${sessionId}/messages`, { content: "What is friction?" });
 
   it("enforces the free plan's AI quota server-side", async () => {
-    await pool.query(
+    await sql(
       `INSERT INTO usage_events (tenant_id, user_id, event_type, quantity) SELECT $1, $2, 'ai_question', 1 FROM generate_series(1, 20)`,
       [student.tenantId, student.userId],
     );
@@ -49,7 +48,7 @@ describe.skipIf(!dbAvailable)("billing, quotas and webhooks", () => {
     expect(second.body.provider_reference).toBe(first.body.provider_reference);
     expect(first.body.amount_paise).toBe(29900);
     providerReference = first.body.provider_reference;
-    const payments = await pool.query(`SELECT count(*)::int AS n FROM payments`);
+    const payments = await sql(`SELECT count(*)::int AS n FROM payments`);
     expect(payments.rows[0].n).toBe(1);
   });
 
@@ -61,16 +60,16 @@ describe.skipIf(!dbAvailable)("billing, quotas and webhooks", () => {
     const evt = { id: "evt_1", type: "payment.captured", data: { provider_reference: providerReference, amount_paise: 29900 } };
     const r1 = await webhook(evt).expect(200);
     expect(r1.body.outcome).toBe("processed");
-    const periodEnd1 = (await pool.query(`SELECT status, period_end FROM subscriptions`)).rows[0];
+    const periodEnd1 = (await sql(`SELECT status, period_end FROM subscriptions`)).rows[0];
     expect(periodEnd1.status).toBe("active");
 
     const r2 = await webhook(evt).expect(200);
     expect(r2.body.outcome).toBe("duplicate");
     // A different event id for the same, already-captured payment must not extend the period either.
     await webhook({ ...evt, id: "evt_1_retry" }).expect(200);
-    const periodEnd2 = (await pool.query(`SELECT period_end FROM subscriptions`)).rows[0];
+    const periodEnd2 = (await sql(`SELECT period_end FROM subscriptions`)).rows[0];
     expect(new Date(periodEnd2.period_end).getTime()).toBe(new Date(periodEnd1.period_end).getTime());
-    const captured = await pool.query(`SELECT count(*)::int AS n FROM payments WHERE status = 'captured'`);
+    const captured = await sql(`SELECT count(*)::int AS n FROM payments WHERE status = 'captured'`);
     expect(captured.rows[0].n).toBe(1);
   });
 
@@ -82,7 +81,7 @@ describe.skipIf(!dbAvailable)("billing, quotas and webhooks", () => {
   });
 
   it("an expired subscription falls back to free limits", async () => {
-    await pool.query(`UPDATE subscriptions SET period_end = now() - interval '1 day'`);
+    await sql(`UPDATE subscriptions SET period_end = now() - interval '1 day'`);
     await ask().expect(402);
     const usage = await api.get(student, "/api/v1/usage/summary").expect(200);
     expect(usage.body.plan).toBe("free");
@@ -95,7 +94,7 @@ describe.skipIf(!dbAvailable)("content indexing", () => {
 
   beforeAll(async () => {
     owner = await register("student", "Self-learner");
-    topicId = (await pool.query(`SELECT id FROM topics ORDER BY sequence LIMIT 1`)).rows[0].id;
+    topicId = (await sql(`SELECT id FROM topics ORDER BY sequence LIMIT 1`)).rows[0].id;
   });
 
   it("uploaded material is retrievable only after successful indexing AND approval", async () => {
@@ -110,7 +109,7 @@ describe.skipIf(!dbAvailable)("content indexing", () => {
     expect((await askZorb()).body.message.source_refs).toEqual([]);
 
     await processOutboxBatch();
-    const asset = (await pool.query(`SELECT processing_status, approval_status FROM content_assets WHERE id = $1`, [up.body.asset.id])).rows[0];
+    const asset = (await sql(`SELECT processing_status, approval_status FROM content_assets WHERE id = $1`, [up.body.asset.id])).rows[0];
     expect(asset).toEqual({ processing_status: "indexed", approval_status: "pending" });
     // Indexed but not approved.
     expect((await askZorb()).body.message.source_refs).toEqual([]);

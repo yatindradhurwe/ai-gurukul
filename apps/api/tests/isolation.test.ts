@@ -1,7 +1,7 @@
 /** Cross-tenant and cross-student access tests (MVP acceptance criteria). */
 import { beforeAll, describe, expect, it } from "vitest";
-import { pool, withTenant } from "../src/database/pool.js";
-import { api, app, dbAvailable, login, register, resetDb, uniqueEmail, type Session } from "./helpers.js";
+import { withTenant } from "../src/database/pool.js";
+import { api, app, dbAvailable, login, register, resetDb, uniqueEmail, type Session, sql } from "./helpers.js";
 import request from "supertest";
 
 describe.skipIf(!dbAvailable)("tenant and student isolation", () => {
@@ -14,7 +14,7 @@ describe.skipIf(!dbAvailable)("tenant and student isolation", () => {
     await resetDb();
     a = await register("student", "Student A");
     b = await register("student", "Student B");
-    scienceId = (await pool.query(`SELECT id FROM subjects WHERE code = 'SCI'`)).rows[0].id;
+    scienceId = (await sql(`SELECT id FROM subjects WHERE code = 'SCI'`)).rows[0].id;
     await api.post(a, "/api/v1/academic/exams", { subjectId: scienceId, title: "Exam", examDate: "2026-12-20", maxMarks: 80 }).expect(201);
     planA = (await api.post(a, "/api/v1/academic/study-plans/generate", { startDate: "2026-12-01" }).expect(201)).body.plan.id;
   });
@@ -71,8 +71,8 @@ describe.skipIf(!dbAvailable)("tenant and student isolation", () => {
       teacherA = await join("teacher", "Teacher A");
       s1 = await join("student", "School Student 1");
       s2 = await join("student", "School Student 2");
-      const cv = (await pool.query(`SELECT id FROM curriculum_versions LIMIT 1`)).rows[0].id;
-      await pool.query(`UPDATE student_profiles SET curriculum_version_id = $1 WHERE tenant_id = $2`, [cv, schoolA]);
+      const cv = (await sql(`SELECT id FROM curriculum_versions LIMIT 1`)).rows[0].id;
+      await sql(`UPDATE student_profiles SET curriculum_version_id = $1 WHERE tenant_id = $2`, [cv, schoolA]);
     });
 
     it("an invitation can only be accepted by the invited email", async () => {
@@ -107,7 +107,7 @@ describe.skipIf(!dbAvailable)("tenant and student isolation", () => {
 
   it("a parent only sees children they are linked to", async () => {
     const p1 = await register("parent", "Parent One");
-    const cv = (await pool.query(`SELECT id FROM curriculum_versions LIMIT 1`)).rows[0].id;
+    const cv = (await sql(`SELECT id FROM curriculum_versions LIMIT 1`)).rows[0].id;
     const c1 = await api.post(p1, "/api/v1/parents/children", { name: "Kid", email: uniqueEmail("kid"), password: "kid-password-1", curriculumVersionId: cv }).expect(201);
     const p2 = await register("parent", "Parent Two");
     // Different family workspace: not even a member.

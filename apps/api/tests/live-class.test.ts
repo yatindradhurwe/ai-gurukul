@@ -3,10 +3,9 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { pool } from "../src/database/pool.js";
 import { liveHub } from "../src/modules/live/events.js";
 import { buildTeachingScript, estimateSpeechSeconds } from "../src/modules/live/script.js";
-import { api, app, dbAvailable, login, register, resetDb, uniqueEmail, type Session } from "./helpers.js";
+import { api, app, dbAvailable, login, register, resetDb, uniqueEmail, type Session, sql } from "./helpers.js";
 
 describe("teaching script", () => {
   it("starts with an intro, splits the lesson into short parts and ends with doubt time", () => {
@@ -62,7 +61,7 @@ describe.skipIf(!dbAvailable)("live AI classroom", () => {
     await api.post(s1, "/api/v1/classes", { name: "8-A Science" }).expect(403);
     classId = (await api.post(teacher, "/api/v1/classes", { name: "8-A Science" }).expect(201)).body.class.id;
     await api.post(teacher, `/api/v1/classes/${classId}/enrollments`, { studentIds: [profileOf[s1.userId], profileOf[s2.userId]] }).expect(201);
-    const lesson = (await pool.query(`SELECT l.id FROM lessons l JOIN topics t ON t.id = l.topic_id WHERE t.title LIKE 'Pressure%'`)).rows[0];
+    const lesson = (await sql(`SELECT l.id FROM lessons l JOIN topics t ON t.id = l.topic_id WHERE t.title LIKE 'Pressure%'`)).rows[0];
     sessionId = (await api.post(teacher, `/api/v1/classes/${classId}/sessions`, { lessonId: lesson.id }).expect(201)).body.session.id;
 
     const mine = await api.get(s1, "/api/v1/classes").expect(200);
@@ -93,7 +92,7 @@ describe.skipIf(!dbAvailable)("live AI classroom", () => {
     const early = await api.post(s1, `/api/v1/live/sessions/${sessionId}/advance`, { expectedSegment: 0 }).expect(409);
     expect(early.body.error.code).toBe("too_early");
     // Simulate the intro having been spoken.
-    await pool.query(`UPDATE live_sessions SET segment_started_at = now() - interval '5 minutes' WHERE id = $1`, [sessionId]);
+    await sql(`UPDATE live_sessions SET segment_started_at = now() - interval '5 minutes' WHERE id = $1`, [sessionId]);
     const [a, b] = await Promise.all([
       api.post(s1, `/api/v1/live/sessions/${sessionId}/advance`, { expectedSegment: 0 }),
       api.post(s2, `/api/v1/live/sessions/${sessionId}/advance`, { expectedSegment: 0 }),
@@ -146,7 +145,7 @@ describe.skipIf(!dbAvailable)("live AI classroom", () => {
   it("the teacher can speak through the avatar, pause and resume", async () => {
     await api.post(teacher, `/api/v1/live/sessions/${sessionId}/say`, { text: "Listen carefully, this part is important." }).expect(201);
     await api.post(teacher, `/api/v1/live/sessions/${sessionId}/pause`).expect(200);
-    await pool.query(`UPDATE live_sessions SET segment_started_at = now() - interval '5 minutes' WHERE id = $1`, [sessionId]);
+    await sql(`UPDATE live_sessions SET segment_started_at = now() - interval '5 minutes' WHERE id = $1`, [sessionId]);
     await api.post(s1, `/api/v1/live/sessions/${sessionId}/advance`, { expectedSegment: 2 }).expect(409);
     await api.post(teacher, `/api/v1/live/sessions/${sessionId}/resume`).expect(200);
     const ev = await events(s1);
@@ -206,7 +205,7 @@ describe.skipIf(!dbAvailable)("live AI classroom", () => {
     const attendance = await api.get(teacher, `/api/v1/live/sessions/${sessionId}/attendance`).expect(200);
     expect(attendance.body.attendance.map((a: any) => a.name).sort()).toEqual(["Anya Singh", "Meera Teacher", "Ravi Kumar"]);
     await api.post(s1, `/api/v1/live/sessions/${sessionId}/questions`, { content: "One more?" }).expect(409);
-    const usage = await pool.query(`SELECT count(*)::int AS n FROM usage_events WHERE event_type = 'live_class_minutes'`);
+    const usage = await sql(`SELECT count(*)::int AS n FROM usage_events WHERE event_type = 'live_class_minutes'`);
     expect(usage.rows[0].n).toBe(1);
   });
 

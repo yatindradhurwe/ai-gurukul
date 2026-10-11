@@ -16,6 +16,7 @@ export async function migrate(log = console.log) {
       if (applied.has(file)) continue;
       const sql = await readFile(path.join(dir, file), "utf8");
       await client.query("BEGIN");
+      await client.query("SELECT set_config('app.system', 'on', true)");
       try {
         await client.query(sql);
         await client.query("INSERT INTO schema_migrations (name) VALUES ($1)", [file]);

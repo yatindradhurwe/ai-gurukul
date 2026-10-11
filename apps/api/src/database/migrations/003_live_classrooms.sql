@@ -96,5 +96,12 @@ BEGIN
   END LOOP;
 END $$;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON classes, class_enrollments, live_sessions, live_session_events, live_questions, live_attendance TO gurukul_app;
-GRANT USAGE, SELECT ON SEQUENCE live_session_events_id_seq TO gurukul_app;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gurukul_app') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON classes, class_enrollments, live_sessions, live_session_events, live_questions, live_attendance TO gurukul_app;
+    GRANT USAGE, SELECT ON SEQUENCE live_session_events_id_seq TO gurukul_app;
+  END IF;
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE NOTICE 'Could not grant to gurukul_app; skipping';
+END $$;

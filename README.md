@@ -111,6 +111,8 @@ npm run build        # builds the API and the web app
 npm start            # runs migrations + idempotent seed, then serves API + website on $PORT
 ```
 
+Any ordinary PostgreSQL user that owns its database works. The app doesn't need superuser, `CREATEROLE` or extension privileges.
+
 Required environment variables:
 
 | Variable | Purpose |

@@ -5,10 +5,9 @@
  * report for the authorised parent.
  */
 import { beforeAll, describe, expect, it } from "vitest";
-import { pool } from "../src/database/pool.js";
 import { addDays } from "../src/modules/academic-planner/dates.js";
 import { processOutboxBatch } from "../src/jobs/outbox.js";
-import { api, dbAvailable, login, register, resetDb, uniqueEmail, type Session } from "./helpers.js";
+import { api, dbAvailable, login, register, resetDb, uniqueEmail, type Session, sql } from "./helpers.js";
 
 const START = "2026-11-01";
 
@@ -77,7 +76,7 @@ describe.skipIf(!dbAvailable)("vertical slice: one student, one lesson, one exam
     const reply = await api.post(student, `/api/v1/ai/sessions/${s.body.session.id}/messages`, { content: "i want to die" }).expect(201);
     expect(reply.body.message.safety_flags).toContain("self_harm");
     expect(reply.body.message.content).toContain("14416");
-    const audit = await pool.query(`SELECT count(*)::int AS n FROM audit_logs WHERE action = 'safety.escalation' AND actor_id = $1`, [student.userId]);
+    const audit = await sql(`SELECT count(*)::int AS n FROM audit_logs WHERE action = 'safety.escalation' AND actor_id = $1`, [student.userId]);
     expect(audit.rows[0].n).toBe(1);
   });
 
@@ -93,7 +92,7 @@ describe.skipIf(!dbAvailable)("vertical slice: one student, one lesson, one exam
     expect(again.body.job.id).toBe(job.body.job.id);
 
     await processOutboxBatch(); // submit + first poll (processing)
-    await pool.query(`UPDATE outbox_events SET available_at = now() WHERE processed_at IS NULL`);
+    await sql(`UPDATE outbox_events SET available_at = now() WHERE processed_at IS NULL`);
     await processOutboxBatch(); // completes
     const after = await api.get(student, `/api/v1/avatar/lessons/${lessonId}`).expect(200);
     expect(after.body.mode).toBe("avatar");
@@ -101,7 +100,7 @@ describe.skipIf(!dbAvailable)("vertical slice: one student, one lesson, one exam
   });
 
   it("4b. an avatar provider failure never blocks the text lesson", async () => {
-    const topics = await pool.query(`SELECT id FROM topics LIMIT 1`);
+    const topics = await sql(`SELECT id FROM topics LIMIT 1`);
     const draft = await api.post(parent, "/api/v1/content/lessons", { topicId: topics.rows[0].id, title: "Broken render", content: "This script will fail. [[fail]]" }).expect(201);
     await api.post(parent, `/api/v1/content/lessons/${draft.body.lesson.id}/publish`).expect(200);
     await api.post(parent, `/api/v1/avatar/lessons/${draft.body.lesson.id}/render`, { idempotencyKey: "render-broken-1" }).expect(202);
@@ -147,7 +146,7 @@ describe.skipIf(!dbAvailable)("vertical slice: one student, one lesson, one exam
 
   it("6. schedules an exam and generates a realistic study plan", async () => {
     // An exam in a subject with no syllabus content cannot produce a plan on its own...
-    const mathId = (await pool.query(`SELECT id FROM subjects WHERE code = 'MATH'`)).rows[0].id;
+    const mathId = (await sql(`SELECT id FROM subjects WHERE code = 'MATH'`)).rows[0].id;
     const math = await api.post(student, "/api/v1/academic/exams", { subjectId: mathId, title: "Maths unit test", examDate: addDays(START, 10), maxMarks: 40 }).expect(201);
     const empty = await api.post(student, "/api/v1/academic/study-plans/generate", { startDate: START, examScheduleIds: [math.body.exam.id] }).expect(400);
     expect(empty.body.error.message).toMatch(/nothing to plan/);
