@@ -11,4 +11,6 @@ BEGIN
   ELSE
     RAISE NOTICE 'pgvector not available; using full-text retrieval only';
   END IF;
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE NOTICE 'No privilege to install pgvector; using full-text retrieval only';
 END $$;

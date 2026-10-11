@@ -1,4 +1,4 @@
-import { pool } from "../database/pool.js";
+import { enterSystemContext, pool } from "../database/pool.js";
 import { handlers, RetryLater, type OutboxEvent } from "./handlers.js";
 
 const MAX_ATTEMPTS = 8;
@@ -14,6 +14,8 @@ export async function processOutboxBatch(limit = 10): Promise<number> {
   try {
     for (let i = 0; i < limit; i++) {
       await client.query("BEGIN");
+      // Workers act across tenants; each handler re-checks the tenant carried on its event.
+      await enterSystemContext(client);
       const e: OutboxEvent | undefined = (
         await client.query(
           `SELECT id, tenant_id, topic, payload, attempts FROM outbox_events

@@ -21,8 +21,11 @@ Curriculum, student records, assessments, the planner and billing all live in on
 
 - Every organisation is a row in `tenants`. Self-signup users get a `personal` workspace; a parent gets a family workspace.
 - Every tenant-owned table carries `tenant_id` and has a PostgreSQL **RLS** policy `tenant_id = current_tenant_id()`.
-- Tenant handlers run inside `withTenant()`, which opens a transaction, sets `app.tenant_id`, and runs `SET LOCAL ROLE gurukul_app`. That role has no BYPASSRLS, so isolation holds even when the database connection is a superuser.
-- Trusted system code (auth, tenant resolution, payment webhooks, workers) uses `withSystem()` and must carry and re-check tenant context explicitly. For example, the indexing job verifies that the asset still belongs to the tenant recorded on the event.
+- Tenant handlers run inside `withTenant()`, which opens a transaction and sets `app.tenant_id`.
+- **No special database privileges are needed.** The policies use `FORCE ROW LEVEL SECURITY`, so they also apply to the table owner. An app connected as an ordinary database user, the usual setup on managed hosting where `CREATE ROLE` isn't allowed, is isolated by the database itself.
+- When the connection is a superuser or a `BYPASSRLS` user, which PostgreSQL always exempts from RLS, `withTenant()` also switches to the restricted `gurukul_app` role (`SET LOCAL ROLE`). Migrations create that role only when they are permitted to.
+- Trusted system code (auth, tenant resolution, payment webhooks, workers, seed) uses `withSystem()`. That sets `app.system = on` for one transaction, which the policies honour. Such code must carry and re-check tenant context explicitly; for example, the indexing job verifies that the asset still belongs to the tenant recorded on the event.
+- CI runs the whole test suite twice: once as a superuser, and once as a restricted user with no superuser or `CREATEROLE` rights.
 - Tenant resolution (`middleware/tenant-context.ts`): the client may *select* a tenant with `X-Tenant-Id` or `X-Tenant-Slug`, or the tenant is derived from a verified custom domain. **An active membership is always checked on the server.** Sending another tenant's id returns 403.
 - Shared content tables (`lessons`, `content_assets`, `document_chunks`, `assessments`) let every tenant read platform rows (`tenant_id IS NULL`), but tenants can write only their own rows.
 

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { hashPassword } from "../../lib/crypto.js";
 import { ROLE_NAMES, ROLE_PERMISSIONS } from "../../lib/permissions.js";
 import { migrate } from "../migrate.js";
-import { pool } from "../pool.js";
+import { enterSystemContext, pool } from "../pool.js";
 import { DIAGNOSTIC_QUESTIONS, PLANS, SCIENCE_CHAPTERS } from "./data.js";
 
 /** Idempotent reference + demo content seed. Safe to run repeatedly. */
@@ -12,6 +12,7 @@ export async function seed(log = console.log) {
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
+    await enterSystemContext(db);
     for (const [id, perms] of Object.entries(ROLE_PERMISSIONS)) {
       await db.query(`INSERT INTO roles (id, name, permissions) VALUES ($1,$2,$3) ON CONFLICT (id) DO UPDATE SET permissions = EXCLUDED.permissions`, [
         id,

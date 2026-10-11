@@ -2,15 +2,17 @@
 -- Conventions: UUID primary keys, timestamptz, money in integer paise,
 -- every tenant-owned table carries tenant_id and is protected by RLS.
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
--- Role the API switches to (SET LOCAL ROLE) inside tenant-scoped transactions.
--- It never bypasses RLS, even when the connection itself is a superuser.
+-- Optional role the API switches to (SET LOCAL ROLE) inside tenant-scoped
+-- transactions when it connects as a superuser, so RLS still applies.
+-- Database users without CREATEROLE (most managed/shared hosting) skip this:
+-- isolation is then enforced by FORCE ROW LEVEL SECURITY (see 004).
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gurukul_app') THEN
     CREATE ROLE gurukul_app NOLOGIN NOBYPASSRLS;
   END IF;
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE NOTICE 'No CREATEROLE privilege: skipping gurukul_app role (RLS is enforced with FORCE ROW LEVEL SECURITY instead)';
 END $$;
 
 CREATE OR REPLACE FUNCTION current_tenant_id() RETURNS uuid
@@ -37,7 +39,7 @@ CREATE TABLE tenant_domains (
   tenant_id           uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   domain              text NOT NULL,
   verification_status text NOT NULL DEFAULT 'pending' CHECK (verification_status IN ('pending','verified','failed')),
-  verification_token  text NOT NULL DEFAULT encode(gen_random_bytes(16), 'hex'),
+  verification_token  text NOT NULL DEFAULT replace(gen_random_uuid()::text, '-', ''),
   created_at          timestamptz NOT NULL DEFAULT now()
 );
 -- A domain can be verified by at most one tenant.
@@ -589,6 +591,13 @@ BEGIN
 END $$;
 
 -- Tables without tenant_id (or global reference data) the app role can still read/write.
-GRANT USAGE ON SCHEMA public TO gurukul_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO gurukul_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO gurukul_app;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gurukul_app') THEN
+    GRANT USAGE ON SCHEMA public TO gurukul_app;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO gurukul_app;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO gurukul_app;
+  END IF;
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE NOTICE 'Could not grant to gurukul_app; skipping';
+END $$;
