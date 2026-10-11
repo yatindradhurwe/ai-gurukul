@@ -28,8 +28,16 @@ export function setTenant(id: string | null) {
 export const getTenant = () => tenantId;
 export const isLoggedIn = () => !!accessToken;
 
+/** Headers for raw fetch calls (e.g. streaming) that bypass api(). */
+export function authHeaders(): Record<string, string> {
+  const h: Record<string, string> = {};
+  if (accessToken) h.Authorization = `Bearer ${accessToken}`;
+  if (tenantId) h["X-Tenant-Id"] = tenantId;
+  return h;
+}
+
 let refreshing: Promise<boolean> | null = null;
-async function tryRefresh(): Promise<boolean> {
+export async function tryRefresh(): Promise<boolean> {
   if (!refreshToken) return false;
   refreshing ??= fetch(`${BASE}/auth/refresh`, {
     method: "POST",

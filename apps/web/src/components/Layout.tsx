@@ -12,6 +12,7 @@ const NAV: NavItem[] = [
   { to: "/", label: "Home", icon: "🏠", show: (can) => can("planner.self") },
   { to: "/learn", label: "Learn", icon: "📚", show: (can) => can("curriculum.read") },
   { to: "/tutor", label: "AI Teacher", icon: "🧑‍🏫", show: (can) => can("tutor.use") },
+  { to: "/classes", label: "Live Classes", icon: "🎥", show: (can) => can("classes.manage") || can("classes.attend") },
   { to: "/plan", label: "Study Plan", icon: "🗓️", show: (can) => can("planner.self") },
   { to: "/results", label: "Results", icon: "📈", show: (can) => can("reports.self") },
   { to: "/children", label: "Children", icon: "👨‍👩‍👧", show: (can) => can("reports.children") },

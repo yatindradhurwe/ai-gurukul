@@ -18,23 +18,25 @@ export const PERMISSIONS = [
   "reports.class",
   "reports.tenant",
   "usage.read",
+  "classes.manage",
+  "classes.attend",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
 
 export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
-  tenant_owner: [...PERMISSIONS].filter((p) => !["assessments.take", "planner.self", "reports.self", "reports.children"].includes(p)),
+  tenant_owner: [...PERMISSIONS].filter((p) => !["assessments.take", "planner.self", "reports.self", "reports.children", "classes.attend"].includes(p)),
   tenant_admin: [
     "members.manage", "curriculum.read", "content.manage", "assessments.manage",
-    "planner.manage_students", "reports.class", "reports.tenant", "usage.read",
+    "planner.manage_students", "reports.class", "reports.tenant", "usage.read", "classes.manage",
   ],
   teacher: [
     "curriculum.read", "content.manage", "assessments.manage", "assessments.review",
-    "planner.manage_students", "reports.class",
+    "planner.manage_students", "reports.class", "classes.manage",
   ],
   content_reviewer: ["curriculum.read", "content.review"],
   parent: ["curriculum.read", "reports.children", "tenant.billing"],
-  student: ["curriculum.read", "tutor.use", "assessments.take", "planner.self", "reports.self"],
+  student: ["curriculum.read", "tutor.use", "assessments.take", "planner.self", "reports.self", "classes.attend"],
 };
 
 export const ROLE_NAMES: Record<string, string> = {

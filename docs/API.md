@@ -118,6 +118,45 @@ Every route here accepts an optional `studentId` for a parent or staff caller. S
 | PATCH | `/academic/tasks/:id` | Student only: `{status}` |
 | GET | `/academic/recommendations` | Built from evidence only |
 
+## Live classes
+
+| Method | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/classes` | classes.manage, classes.attend | Teacher: their classes (admins: all). Student: enrolled classes with upcoming or live sessions. |
+| POST | `/classes` | classes.manage | `{name, subjectId?, curriculumVersionId?, teacherId?}` |
+| GET | `/classes/:id` | teacher or enrolled student | |
+| POST | `/classes/:id/enrollments` | class teacher or admin | `{studentIds: [studentProfileId]}` |
+| POST | `/classes/:id/sessions` | class teacher or admin | `{lessonId, title?, scheduledAt?, language?, avatarId?}` |
+| GET | `/live/sessions/:id` | teacher or enrolled student | State, script, current part, doubts and `lastEventId`. Records attendance. |
+| POST | `/live/sessions/:id/start` | class teacher | Builds the script from the approved lesson |
+| POST | `/live/sessions/:id/advance` | participant | `{expectedSegment, manual?}`. Compare-and-set with server pacing; `manual` works for the teacher only. |
+| POST | `/live/sessions/:id/pause` | class teacher | |
+| POST | `/live/sessions/:id/resume` | class teacher | |
+| POST | `/live/sessions/:id/say` | class teacher | `{text}`: the avatar says it to the class |
+| POST | `/live/sessions/:id/questions` | enrolled student | `{content, inputMode: text\|voice}` → `answered`, `escalated` or `private`. Rate limited to 6/min. |
+| POST | `/live/sessions/:id/questions/:qid/resolve` | class teacher | `{answer}` for an escalated doubt |
+| POST | `/live/sessions/:id/end` | class teacher | Records attendance and `live_class_minutes` |
+| GET | `/live/sessions/:id/attendance` | class teacher | |
+| GET | `/live/sessions/:id/stream?after=` | participant | Server-sent events (`event: live`). Honours `Last-Event-ID`. |
+| GET | `/live/sessions/:id/events?after=` | participant | Polling fallback |
+
+**Event types:**
+
+| Event | Sent to |
+| --- | --- |
+| `session.started` | everyone |
+| `segment` | everyone |
+| `doubt.answered` | everyone |
+| `doubt.escalated` | everyone |
+| `doubt.resolved` | everyone |
+| `teacher.message` | everyone |
+| `session.paused` | everyone |
+| `session.resumed` | everyone |
+| `lesson.completed` | everyone |
+| `session.ended` | everyone |
+| `doubt.private` | the asking student only |
+| `safety.alert` | staff only |
+
 ## Parents
 
 | Method | Path | Permission | Notes |

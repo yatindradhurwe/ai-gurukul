@@ -1,6 +1,9 @@
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { env } from "./config/env.js";
 import { pool } from "./database/pool.js";
 import { authenticate, requireAuthentication } from "./middleware/authentication.js";
@@ -16,6 +19,7 @@ import { avatarRouter } from "./modules/avatar/routes.js";
 import { billingRouter, billingWebhookRouter } from "./modules/billing/routes.js";
 import { contentRouter } from "./modules/content/routes.js";
 import { coursesRouter, curriculumRouter } from "./modules/curriculum/routes.js";
+import { classesRouter, liveRouter } from "./modules/live/routes.js";
 import { parentsRouter } from "./modules/parents/routes.js";
 import { tenantsRouter } from "./modules/tenants/routes.js";
 import { usageRouter } from "./modules/usage/routes.js";
@@ -54,6 +58,15 @@ export function createApp() {
   app.use("/api/v1/academic", tenantScoped, academicRouter);
   app.use("/api/v1/parents", tenantScoped, parentsRouter);
   app.use("/api/v1/usage", tenantScoped, usageRouter);
+  app.use("/api/v1/classes", tenantScoped, classesRouter);
+  app.use("/api/v1/live", tenantScoped, liveRouter);
+
+  // Single-app deployments: serve the built React app and fall back to index.html for client routes.
+  const webDist = env.WEB_DIST_DIR ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
+  if (existsSync(path.join(webDist, "index.html"))) {
+    app.use(express.static(webDist, { index: false, maxAge: "1h" }));
+    app.get(/^\/(?!api\/|health$|media\/).*/, (_req, res) => res.sendFile(path.join(webDist, "index.html")));
+  }
 
   app.use((_req, res) => res.status(404).json({ error: { code: "not_found", message: "Route not found" } }));
   app.use(errorHandler);

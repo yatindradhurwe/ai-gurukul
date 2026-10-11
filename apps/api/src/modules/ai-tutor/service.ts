@@ -73,7 +73,6 @@ export async function answerQuestion(
   // Quota is checked (and usage recorded) only for real tutoring requests.
   await assertQuota(db, args.tenantId, args.userId, "ai_questions_per_month");
 
-  const passages = await retrievePassages(db, args.question, { topicId: session.topic_id, curriculumVersionId: args.curriculumVersionId });
   const history = (
     await db.query(
       `SELECT role, content FROM tutor_messages WHERE session_id = $1 AND id <> $2 AND role IN ('student','assistant') AND safety_flags = '{}'
@@ -81,19 +80,16 @@ export async function answerQuestion(
       [args.sessionId, studentMsg.id],
     )
   ).rows.reverse();
-  const messages: ChatTurn[] = [
-    ...history.map((m): ChatTurn => ({ role: m.role === "student" ? "user" : "assistant", content: m.content })),
-    { role: "user", content: args.question },
-  ];
-
-  const ai = getAIProvider();
-  const system = buildSystemPrompt({ grade: session.grade, subject: session.subject, topic: session.topic, language: args.language }, passages);
-  const output = await ai.generate({ system, messages, maxTokens: 900 });
-  const { text, cited } = validateCitations(output.text, new Set(passages.map((p) => p.ref)));
-  const sourceRefs = passages
-    .filter((p) => cited.includes(p.ref))
-    .map((p) => ({ ref: p.ref, chunkId: p.chunkId, assetId: p.assetId, title: p.assetTitle, page: p.pageNumber, excerpt: p.text.slice(0, 240) }));
-  const flags = passages.length === 0 ? ["ungrounded"] : [];
+  const { text, sourceRefs, flags } = await generateGroundedAnswer(db, {
+    tenantId: args.tenantId,
+    userId: args.userId,
+    question: args.question,
+    history: history.map((m): ChatTurn => ({ role: m.role === "student" ? "user" : "assistant", content: m.content })),
+    topicId: session.topic_id,
+    curriculumVersionId: args.curriculumVersionId,
+    context: { grade: session.grade, subject: session.subject, topic: session.topic, language: args.language },
+    usageMetadata: { sessionId: args.sessionId },
+  });
 
   const reply = (
     await db.query(
@@ -103,13 +99,53 @@ export async function answerQuestion(
     )
   ).rows[0];
 
-  await recordUsage(db, { tenantId: args.tenantId, userId: args.userId, eventType: "ai_question", quantity: 1, metadata: { sessionId: args.sessionId } });
+  return reply;
+}
+
+export interface GroundedAnswer {
+  text: string;
+  sourceRefs: { ref: string; chunkId: string; assetId: string; title: string; page: number | null; excerpt: string }[];
+  flags: string[]; // "ungrounded" when no approved material matched
+}
+
+/**
+ * Retrieve approved material, ask the model, validate citations and meter the
+ * usage. Shared by 1:1 tutoring and live classroom doubts. Callers run the
+ * safety screen and quota check first.
+ */
+export async function generateGroundedAnswer(
+  db: Db,
+  args: {
+    tenantId: string;
+    userId: string;
+    question: string;
+    history?: ChatTurn[];
+    topicId?: string | null;
+    curriculumVersionId?: string | null;
+    context: { grade?: string; subject?: string; topic?: string; language: string; classroom?: boolean };
+    usageMetadata?: Record<string, unknown>;
+  },
+): Promise<GroundedAnswer> {
+  const passages = await retrievePassages(db, args.question, { topicId: args.topicId, curriculumVersionId: args.curriculumVersionId });
+  const ai = getAIProvider();
+  let system = buildSystemPrompt(args.context, passages);
+  if (args.context.classroom) {
+    system +=
+      "\nYou are answering a student's doubt out loud in a live class, so keep it to 3-5 short spoken sentences without markdown, still citing sources like [S1].";
+  }
+  const output = await ai.generate({ system, messages: [...(args.history ?? []), { role: "user", content: args.question }], maxTokens: args.context.classroom ? 400 : 900 });
+  const { text, cited } = validateCitations(output.text, new Set(passages.map((p) => p.ref)));
+  const sourceRefs = passages
+    .filter((p) => cited.includes(p.ref))
+    .map((p) => ({ ref: p.ref, chunkId: p.chunkId, assetId: p.assetId, title: p.assetTitle, page: p.pageNumber, excerpt: p.text.slice(0, 240) }));
+
+  await recordUsage(db, { tenantId: args.tenantId, userId: args.userId, eventType: "ai_question", quantity: 1, metadata: args.usageMetadata });
   await recordUsage(db, {
     tenantId: args.tenantId,
     userId: args.userId,
     eventType: "ai_tokens",
     quantity: output.usage.inputTokens + output.usage.outputTokens,
-    metadata: { provider: output.provider, model: output.model, input: output.usage.inputTokens, output: output.usage.outputTokens },
+    metadata: { provider: output.provider, model: output.model, input: output.usage.inputTokens, output: output.usage.outputTokens, ...args.usageMetadata },
   });
-  return reply;
+  return { text, sourceRefs, flags: passages.length === 0 ? ["ungrounded"] : [] };
 }

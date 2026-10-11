@@ -91,6 +91,46 @@ The tutor uses retrieval-augmented generation:
 - **Live sessions** mint short-lived client credentials on the server.
 - Live minutes, lesson views and renders are metered separately.
 
+## Live AI classrooms (`modules/live`)
+
+```
+Teacher browser ─┐                                   ┌─► SSE stream ─► every student's browser
+Student browsers ─┼─► REST (start, advance, doubts) ─► live_session_events ─ pg_notify ─┤
+                  │                                   └─► polling fallback
+                  └─ AvatarFace (SVG visemes) + Web Speech API (TTS out, STT in)
+```
+
+**Classes and sessions.** `classes` and `class_enrollments` model batches. A `live_session` teaches one published lesson. When the session starts, the server builds the script from the lesson's approved text (`buildTeachingScript`): an intro, short two-to-three-sentence parts, and a closing "doubt time". The avatar never improvises lesson content.
+
+**Real-time.** Every change is appended to `live_session_events` and announced with `pg_notify`. Because the notification is transactional, it fans out across all API instances.
+
+- Each SSE connection replays from `Last-Event-ID` and then pushes new events. Clients reconnect automatically and fall back to polling `/events`.
+- Each event has an audience: `all`, `staff`, or a single `user` (private replies). The audience is filtered per viewer.
+
+**Server-authoritative pacing.**
+
+- Clients nudge `advance` when their avatar finishes a part. The call is a compare-and-set on the expected index, so thirty students nudging at once advance the lesson exactly once.
+- No one can advance before half of the part's estimated speaking time has passed, unless the teacher presses **Next part**.
+- An answer or teacher message holds pacing for its own speaking time, and clients then replay the current part.
+
+**Doubts.**
+
+1. The student asks by voice or text.
+2. Safety screening runs. Sensitive messages get a private reply, a `safety.alert` to staff only, and an audit entry.
+3. The quota is checked.
+4. The same grounded pipeline as 1:1 tutoring answers it (`generateGroundedAnswer`), retrieving from the lesson's topic and validating citations, in short spoken form.
+5. If nothing relevant is retrieved, the doubt is **escalated** instead of guessed. The teacher answers it, and the avatar reads the answer out.
+6. Classmates see only first names.
+
+**The avatar.**
+
+- **Default renderer:** browser-based, with no per-minute cost. It uses an SVG face, a viseme track from word-boundary events, blinking, and state glows for speaking, listening and thinking.
+- **Robustness:** speech is spoken sentence by sentence. If the engine never starts, errors, or "finishes" impossibly fast, the client falls back to timed silent playback with captions, so pacing never stalls.
+- **Voice input:** the Web Speech API's speech recognition.
+- **Photorealistic upgrade path:** a streaming-avatar vendor adapter would implement `AvatarProvider.createSession` (short-lived client token, already metered per minute) and replace `AvatarFace` and `AvatarVoice` on the client. The event and pacing protocol stays the same.
+
+**Metering:** doubts count toward AI quotas; `live_class_minutes` and attendance are recorded when the class ends.
+
 ## Billing
 
 - Plan entitlements are stored as structured JSON and resolved on the server (`modules/billing/entitlements.ts`). A personal subscription takes precedence over an institution one. Once a subscription expires, the free plan applies.

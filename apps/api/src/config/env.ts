@@ -14,6 +14,10 @@ const schema = z.object({
   AVATAR_PROVIDER: z.enum(["mock"]).default("mock"),
   PAYMENT_PROVIDER: z.enum(["mock"]).default("mock"),
   PAYMENT_WEBHOOK_SECRET: z.string().default("dev-webhook-secret"),
+  // Run the outbox worker inside the API process (handy for single-container hosts).
+  RUN_WORKER_IN_PROCESS: z.enum(["true", "false"]).default("false"),
+  // Serve the built web app from the API. Defaults to apps/web/dist when it exists.
+  WEB_DIST_DIR: z.string().optional(),
   RATE_LIMIT_DISABLED: z.enum(["true", "false"]).default("false"),
 });
 
