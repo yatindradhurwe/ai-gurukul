@@ -34,6 +34,9 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "curriculum.read", "content.manage", "assessments.manage", "assessments.review",
     "planner.manage_students", "reports.class", "classes.manage",
   ],
+  // Staff / HR: people administration and organisation reports, but no access to
+  // individual students' academic records, content or classes.
+  staff: ["curriculum.read", "members.manage", "reports.tenant", "usage.read"],
   content_reviewer: ["curriculum.read", "content.review"],
   parent: ["curriculum.read", "reports.children", "tenant.billing"],
   student: ["curriculum.read", "tutor.use", "assessments.take", "planner.self", "reports.self", "classes.attend"],
@@ -43,6 +46,7 @@ export const ROLE_NAMES: Record<string, string> = {
   tenant_owner: "Tenant owner",
   tenant_admin: "Tenant admin",
   teacher: "Teacher",
+  staff: "Staff / HR",
   content_reviewer: "Content reviewer",
   parent: "Parent / guardian",
   student: "Student",

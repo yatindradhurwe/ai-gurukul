@@ -10,6 +10,9 @@ import { ChildReportPage } from "./pages/ChildReportPage";
 import { ClassesPage } from "./pages/ClassesPage";
 import { ClassroomPage } from "./pages/ClassroomPage";
 import { ContentPage } from "./pages/ContentPage";
+import { JoinPage } from "./pages/JoinPage";
+import { PeoplePage } from "./pages/PeoplePage";
+import { PlatformAdminPage } from "./pages/PlatformAdminPage";
 import { LearnPage } from "./pages/LearnPage";
 import { LessonPage } from "./pages/LessonPage";
 import { ParentPage } from "./pages/ParentPage";
@@ -21,10 +24,10 @@ import { TutorPage } from "./pages/TutorPage";
 import "./index.css";
 
 function App() {
-  const { user, loading, can } = useAuth();
+  const { user, loading, can, info } = useAuth();
   if (loading) return <Spinner />;
   if (!user) return <AuthPage />;
-  const home = can("planner.self") ? <StudentHome /> : can("reports.children") ? <Navigate to="/children" replace /> : can("classes.manage") ? <Navigate to="/classes" replace /> : <Navigate to="/learn" replace />;
+  const home = can("planner.self") ? <StudentHome /> : can("reports.children") ? <Navigate to="/children" replace /> : can("classes.manage") ? <Navigate to="/classes" replace /> : can("members.manage") ? <Navigate to="/people" replace /> : user.is_platform_admin && !info ? <Navigate to="/platform" replace /> : <Navigate to="/learn" replace />;
   return (
     <Routes>
       <Route element={<Layout />}>
@@ -41,6 +44,9 @@ function App() {
         <Route path="children/:studentId" element={<ChildReportPage />} />
         <Route path="content" element={<ContentPage />} />
         <Route path="billing" element={<BillingPage />} />
+        <Route path="people" element={<PeoplePage />} />
+        <Route path="join" element={<JoinPage />} />
+        <Route path="platform" element={<PlatformAdminPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

@@ -10,15 +10,17 @@ describe.skipIf(!dbAvailable)("demo accounts setup", () => {
 
   it("creates one working login per role, idempotently", async () => {
     const first = await setupDemo();
-    expect(first.map((r) => r.user.key)).toEqual(["admin", "principal", "teacher", "student1", "student2", "parent"]);
+    expect(first.map((r) => r.user.key)).toEqual(["superadmin", "principal", "admin", "teacher", "staff", "student1", "student2", "parent"]);
     expect(first.every((r) => r.password)).toBe(true);
 
     const login = async (email: string, password: string) => (await request(app).post("/api/v1/auth/login").send({ email, password }).expect(200)).body.accessToken as string;
     const byKey = Object.fromEntries(first.map((r) => [r.user.key, r]));
 
-    // Admin can use the platform admin API and the school.
-    const adminToken = await login(byKey.admin.user.email, byKey.admin.password!);
+    // Only the super admin can use the platform admin API.
+    const adminToken = await login(byKey.superadmin.user.email, byKey.superadmin.password!);
     await request(app).get("/api/v1/admin/tenants").set("Authorization", `Bearer ${adminToken}`).expect(200);
+    const schoolAdminToken = await login(byKey.admin.user.email, byKey.admin.password!);
+    await request(app).get("/api/v1/admin/tenants").set("Authorization", `Bearer ${schoolAdminToken}`).expect(403);
 
     // Teacher sees the class with a scheduled live lesson; student is enrolled; parent sees the child.
     const tenant = (await request(app).get("/api/v1/auth/me").set("Authorization", `Bearer ${adminToken}`)).body.memberships.find((m: any) => m.slug === "demo-school").tenant_id;
@@ -29,6 +31,17 @@ describe.skipIf(!dbAvailable)("demo accounts setup", () => {
     expect((await request(app).get("/api/v1/classes").set(await as("student1")).expect(200)).body.classes).toHaveLength(1);
     const children = await request(app).get("/api/v1/parents/children").set(await as("parent")).expect(200);
     expect(children.body.children.map((c: any) => c.name)).toEqual(["Ravi Kumar"]);
+
+    // School admin and staff/HR manage people; HR cannot open a student's academic records.
+    const members = await request(app).get("/api/v1/tenants/current/members").set(await as("staff")).expect(200);
+    expect(members.body.members).toHaveLength(8);
+    const roles = Object.fromEntries(members.body.members.map((m: any) => [m.email, m.roles]));
+    expect(roles[byKey.staff.user.email]).toEqual(["staff"]);
+    expect(roles[byKey.admin.user.email]).toEqual(["tenant_admin"]);
+    await request(app).post(`/api/v1/tenants/${tenant}/invitations`).set(await as("staff")).send({ email: "new.teacher@example.test", role: "teacher" }).expect(201);
+    const ravi = members.body.members.find((m: any) => m.name === "Ravi Kumar").student_profile_id;
+    await request(app).get(`/api/v1/academic/syllabus-progress?studentId=${ravi}`).set(await as("staff")).expect(403);
+    await request(app).get(`/api/v1/academic/syllabus-progress?studentId=${ravi}`).set(await as("admin")).expect(200);
 
     // Re-running keeps passwords unless asked to reset, and does not duplicate data.
     const second = await setupDemo();

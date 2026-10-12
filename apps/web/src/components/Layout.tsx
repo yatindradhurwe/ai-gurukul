@@ -5,7 +5,7 @@ interface NavItem {
   to: string;
   label: string;
   icon: string;
-  show: (can: (p: string) => boolean) => boolean;
+  show: (can: (p: string) => boolean, platformAdmin: boolean) => boolean;
 }
 
 const NAV: NavItem[] = [
@@ -17,12 +17,14 @@ const NAV: NavItem[] = [
   { to: "/results", label: "Results", icon: "📈", show: (can) => can("reports.self") },
   { to: "/children", label: "Children", icon: "👨‍👩‍👧", show: (can) => can("reports.children") },
   { to: "/content", label: "Content", icon: "🗂️", show: (can) => can("content.manage") || can("content.review") },
+  { to: "/people", label: "People", icon: "👥", show: (can) => can("members.manage") },
   { to: "/billing", label: "Billing", icon: "💳", show: (can) => can("tenant.billing") },
+  { to: "/platform", label: "Platform admin", icon: "🛡️", show: (_can, platformAdmin) => platformAdmin },
 ];
 
 export function Layout() {
   const { user, tenant, memberships, can, logout, switchTenant } = useAuth();
-  const items = NAV.filter((n) => n.show(can));
+  const items = NAV.filter((n) => n.show(can, !!user?.is_platform_admin));
   return (
     <div className="min-h-screen md:flex">
       <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-200 bg-white p-4 md:flex">

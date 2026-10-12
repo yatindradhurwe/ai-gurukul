@@ -61,15 +61,24 @@ npm run setup:demo -- --reset-passwords         # issue new passwords for existi
 
 It creates the organization "Demo School" with these logins:
 
-| Email | Role |
-| --- | --- |
-| `admin@demo.aigurukul.test` | Platform super-admin, also owner of Demo School |
-| `principal@demo.aigurukul.test` | School owner |
-| `teacher@demo.aigurukul.test` | Teacher of class 8-A Science, with a live AI lesson ready to start |
-| `student1@…` and `student2@…` | Students enrolled in 8-A Science |
-| `parent@demo.aigurukul.test` | Parent of student1 |
+| Email | Role | What they see |
+| --- | --- | --- |
+| `superadmin@demo.aigurukul.test` | Platform super-admin | **Platform admin** console: all organisations (suspend or reactivate), audit log, usage. Also owner of Demo School. |
+| `principal@demo.aigurukul.test` | School owner | Everything in the school, including billing |
+| `admin@demo.aigurukul.test` | School admin | People, classes, content, reports |
+| `teacher@demo.aigurukul.test` | Teacher | Live Classes (8-A Science, with a live AI lesson ready), content, tests |
+| `staff@demo.aigurukul.test` | Staff / HR | **People** directory and invitations, organisation reports. No access to students' academic records. |
+| `student1@…` and `student2@…` | Students | Home, AI Teacher, Live Classes, Study Plan, Results |
+| `parent@demo.aigurukul.test` | Parent of student1 | Children, weekly report, billing |
 
-Use `ADMIN_EMAIL=you@yourdomain.com` to choose the admin's email, or `DEMO_EMAIL_DOMAIN` to change the domain for all of them.
+Environment variables:
+
+| Variable | Effect |
+| --- | --- |
+| `DEMO_PASSWORD` | One password for every demo account |
+| `SUPERADMIN_PASSWORD` | A separate password for the super-admin (recommended) |
+| `SUPERADMIN_EMAIL` | Use your own email for the super-admin |
+| `DEMO_EMAIL_DOMAIN` | Change the email domain for all demo accounts |
 
 The script is safe to run again: existing accounts keep their passwords unless you pass `--reset-passwords`. Change or remove demo accounts before real users join.
 
