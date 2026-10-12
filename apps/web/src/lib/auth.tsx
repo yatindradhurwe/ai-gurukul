@@ -17,7 +17,7 @@ interface TenantInfo {
 }
 
 interface AuthState {
-  user: { id: string; name: string; email: string } | null;
+  user: { id: string; name: string; email: string; is_platform_admin?: boolean } | null;
   memberships: Membership[];
   tenant: Membership | null;
   info: TenantInfo | null;

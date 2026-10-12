@@ -3,6 +3,7 @@
  *
  *   npm run setup:demo                         # random passwords, printed once
  *   DEMO_PASSWORD='MyPass#2026' npm run setup:demo
+ *   SUPERADMIN_PASSWORD='...' DEMO_PASSWORD='...' npm run setup:demo   # separate super-admin password
  *   npm run setup:demo -- --reset-passwords    # re-issue passwords for existing demo users
  *
  * Safe to run more than once: existing accounts are kept, and their passwords are
@@ -21,17 +22,27 @@ interface DemoUser {
   key: string;
   name: string;
   email: string;
-  role: string;
+  role: string; // role in Demo School
+  label: string;
   what: string;
 }
 
 const USERS: DemoUser[] = [
-  { key: "admin", name: "Platform Admin", email: process.env.ADMIN_EMAIL ?? `admin@${DOMAIN}`, role: "tenant_owner", what: "Platform super-admin (+ owner of Demo School)" },
-  { key: "principal", name: "Principal Sharma", email: `principal@${DOMAIN}`, role: "tenant_owner", what: "School owner: members, content, billing" },
-  { key: "teacher", name: "Meera Iyer", email: `teacher@${DOMAIN}`, role: "teacher", what: "Teacher: classes, live AI lessons, doubts" },
-  { key: "student1", name: "Ravi Kumar", email: `student1@${DOMAIN}`, role: "student", what: "Student (enrolled in 8-A Science)" },
-  { key: "student2", name: "Anya Singh", email: `student2@${DOMAIN}`, role: "student", what: "Student (enrolled in 8-A Science)" },
-  { key: "parent", name: "Sunita Kumar", email: `parent@${DOMAIN}`, role: "parent", what: "Parent of Ravi Kumar" },
+  {
+    key: "superadmin",
+    name: "Platform Super Admin",
+    email: (process.env.SUPERADMIN_EMAIL ?? process.env.ADMIN_EMAIL ?? `superadmin@${DOMAIN}`).toLowerCase(),
+    role: "tenant_owner",
+    label: "Super admin",
+    what: "Platform super-admin: all organisations, audit logs, usage (also owner of Demo School)",
+  },
+  { key: "principal", name: "Principal Sharma", email: `principal@${DOMAIN}`, role: "tenant_owner", label: "School owner", what: "School owner: everything in the school, incl. billing" },
+  { key: "admin", name: "Rahul Verma", email: `admin@${DOMAIN}`, role: "tenant_admin", label: "School admin", what: "School admin: people, classes, content, reports" },
+  { key: "teacher", name: "Meera Iyer", email: `teacher@${DOMAIN}`, role: "teacher", label: "Teacher", what: "Teacher: classes, live AI lessons, doubts, tests" },
+  { key: "staff", name: "Kavita Nair", email: `staff@${DOMAIN}`, role: "staff", label: "Staff / HR", what: "Staff / HR: people directory, invitations, organisation reports" },
+  { key: "student1", name: "Ravi Kumar", email: `student1@${DOMAIN}`, role: "student", label: "Student", what: "Student (enrolled in 8-A Science)" },
+  { key: "student2", name: "Anya Singh", email: `student2@${DOMAIN}`, role: "student", label: "Student", what: "Student (enrolled in 8-A Science)" },
+  { key: "parent", name: "Sunita Kumar", email: `parent@${DOMAIN}`, role: "parent", label: "Parent", what: "Parent of Ravi Kumar" },
 ];
 
 const generatePassword = () => `${randomBytes(9).toString("base64url")}#7`;
@@ -47,7 +58,7 @@ async function ensureUser(db: Db, u: DemoUser, password: string, reset: boolean)
   return { id: row.id, password };
 }
 
-export async function setupDemo(opts: { reset?: boolean; password?: string } = {}) {
+export async function setupDemo(opts: { reset?: boolean; password?: string; superadminPassword?: string } = {}) {
   await seed(() => {});
   const db = await pool.connect();
   const results: { user: DemoUser; password: string | null }[] = [];
@@ -62,14 +73,18 @@ export async function setupDemo(opts: { reset?: boolean; password?: string } = {
 
     const ids: Record<string, string> = {};
     for (const u of USERS) {
-      const r = await ensureUser(db, u, opts.password ?? generatePassword(), !!opts.reset);
+      const chosen = u.key === "superadmin" ? (opts.superadminPassword ?? opts.password) : opts.password;
+      const r = await ensureUser(db, u, chosen ?? generatePassword(), !!opts.reset);
       ids[u.key] = r.id;
       results.push({ user: u, password: r.password });
+      // Each demo user has exactly one role in Demo School, and only the super admin is a platform admin.
+      await db.query(`DELETE FROM tenant_memberships WHERE tenant_id = $1 AND user_id = $2 AND role_id <> $3`, [tenant.id, r.id, u.role]);
       await db.query(
         `INSERT INTO tenant_memberships (tenant_id, user_id, role_id) VALUES ($1,$2,$3)
          ON CONFLICT (tenant_id, user_id, role_id) DO UPDATE SET status = 'active'`,
         [tenant.id, r.id, u.role],
       );
+      await db.query(`UPDATE users SET is_platform_admin = $2 WHERE id = $1`, [r.id, u.key === "superadmin"]);
       if (u.role === "student") {
         await db.query(
           `INSERT INTO student_profiles (tenant_id, user_id, curriculum_version_id) VALUES ($1,$2,$3)
@@ -78,7 +93,6 @@ export async function setupDemo(opts: { reset?: boolean; password?: string } = {
         );
       }
     }
-    await db.query(`UPDATE users SET is_platform_admin = true WHERE id = $1`, [ids.admin]);
 
     const profile = async (key: string) =>
       (await db.query(`SELECT id FROM student_profiles WHERE tenant_id = $1 AND user_id = $2`, [tenant.id, ids[key]])).rows[0].id as string;
@@ -115,11 +129,11 @@ export async function setupDemo(opts: { reset?: boolean; password?: string } = {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const reset = process.argv.includes("--reset-passwords");
-  setupDemo({ reset, password: process.env.DEMO_PASSWORD })
+  setupDemo({ reset, password: process.env.DEMO_PASSWORD, superadminPassword: process.env.SUPERADMIN_PASSWORD })
     .then((results) => {
       console.log("\nAI Gurukul demo accounts (organization: Demo School)\n");
       for (const { user, password } of results) {
-        console.log(`  ${user.what}`);
+        console.log(`  ${user.label.toUpperCase()} — ${user.what}`);
         console.log(`    email:    ${user.email}`);
         console.log(`    password: ${password ?? "(unchanged — already existed; rerun with --reset-passwords to issue a new one)"}\n`);
       }
