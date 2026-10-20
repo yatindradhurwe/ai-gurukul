@@ -23,6 +23,7 @@ describe("promotion rules", () => {
 describe.skipIf(!dbAvailable)("promotion after final results", () => {
   let owner: Session;
   let teacher: Session;
+  let parent: Session;
   let schoolId: string;
   let c7: string;
   let c8: string;
@@ -49,6 +50,8 @@ describe.skipIf(!dbAvailable)("promotion after final results", () => {
     c7 = classes.find((c: any) => c.name === "7-A").id;
     c8 = classes.find((c: any) => c.name === "8-A").id;
     await sql(`INSERT INTO class_enrollments (tenant_id, class_id, student_id) SELECT $1, $2, unnest($3::uuid[])`, [schoolId, c7, Object.values(kids)]);
+    parent = await join("parent", "Bala's Mother");
+    await sql(`INSERT INTO parent_student_links (tenant_id, parent_id, student_id, relationship, consent_status) VALUES ($1,$2,$3,'mother','granted')`, [schoolId, parent.userId, kids["Bala Supply"]]);
   });
 
   afterAll(async () => {
@@ -68,6 +71,7 @@ describe.skipIf(!dbAvailable)("promotion after final results", () => {
 
   it("previews, then promotes on declaring results when auto-promotion is on", async () => {
     const exam = await finalExam("Annual Exam 2026-27", { "Asha Pass": [80, 75, 70], "Bala Supply": [20, 60, 55], "Chitra Fail": [10, 12, 15] });
+    const child = async () => (await api.get(parent, "/api/v1/dashboard").expect(200)).body.children[0];
     const preview = (await api.get(owner, `/api/v1/promotion/preview?examId=${exam.id}`).expect(200)).body;
     const seven = preview.classes.find((c: any) => c.class.id === c7);
     expect(seven.next).toMatchObject({ id: c8, name: "8-A" });
@@ -78,6 +82,13 @@ describe.skipIf(!dbAvailable)("promotion after final results", () => {
     await api.put(owner, "/api/v1/promotion/rules", { ...rules, autoPromote: true }).expect(200);
     const declared = (await api.patch(owner, `/api/v1/exams/${exam.id}`, { status: "completed" }).expect(200)).body;
     expect(declared.promotion).toMatchObject({ promoted: 1, supplementary: 1, detained: 1 });
+
+    // The parent sees the supplementary re-exam on their dashboard.
+    const bala = await child();
+    expect(bala.classes).toEqual(["7-A"]);
+    expect(bala.supplementary).toEqual([expect.objectContaining({ subject: "Maths", status: "pending", original_marks: 20, target_class: "8-A" })]);
+    expect(bala.awaitingPromotion).toBeNull();
+    await api.get(parent, `/api/v1/promotion/supplementary`).expect(403);
 
     const roster = async (id: string) => (await api.get(owner, `/api/v1/directory/classes/${id}`).expect(200)).body.students.map((s: any) => s.name).sort();
     expect(await roster(c8)).toEqual(["Asha Pass"]);
@@ -100,6 +111,9 @@ describe.skipIf(!dbAvailable)("promotion after final results", () => {
     expect(bala.classes.map((c: any) => c.name)).toEqual(["8-A"]);
     expect(bala.history[0].remarks).toContain("Cleared supplementary exam: Maths 41/100");
     expect((await api.get(owner, "/api/v1/promotion/supplementary").expect(200)).body.supplementary).toHaveLength(0);
+    const child = (await api.get(parent, "/api/v1/dashboard").expect(200)).body.children[0];
+    expect(child).toMatchObject({ classes: ["8-A"], supplementary: [] });
+    expect(child.promotions[0]).toMatchObject({ result: "promoted", class_name: "7-A", promoted_to_class_name: "8-A" });
   });
 
   it("lets the principal override an outcome before running", async () => {

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Icon, type IconName } from "../components/icons";
 import { Avatar, Badge, Donut, Empty, ErrorNote, Progress, SectionCard, Spinner, StatCard, fmtDate, fmtDateTime, inr, pct100, toneForPercent } from "../components/ui";
@@ -67,6 +68,88 @@ function WeekBars({ days }: { days: { date: string; rate: number | null }[] }) {
           <span className="text-[11px] text-slate-500">{fmtDate(d.date, { weekday: "short" })}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+const YEAR_RESULT: Record<string, { label: string; tone: "green" | "amber" | "red" | "slate" | "sky" }> = {
+  promoted: { label: "Promoted", tone: "green" },
+  passed_out: { label: "Passed out", tone: "green" },
+  detained: { label: "Same class", tone: "red" },
+  left: { label: "Left school", tone: "slate" },
+};
+
+/** A child's promotion picture for parents: re-exams due, a decision pending, and each year's result. */
+function ChildStanding({ c }: { c: any }) {
+  const [more, setMore] = useState(false);
+  const supp: any[] = c.supplementary ?? [];
+  const years: any[] = c.promotions ?? [];
+  if (!supp.length && !c.awaitingPromotion && !years.length) return null;
+  const latest = years[0];
+  return (
+    <div className="mt-3 space-y-2">
+      {supp.length > 0 && (
+        <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200">
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-amber-900">
+            <Icon name="file" size={15} /> Supplementary exam{supp.length > 1 ? "s" : ""}
+          </p>
+          <ul className="mt-1.5 space-y-1 text-xs text-amber-900">
+            {supp.map((x, i) => (
+              <li key={i} className="flex flex-wrap items-center justify-between gap-1">
+                <span>
+                  <span className="font-semibold">{x.subject}</span> · first attempt {x.original_marks ?? "—"}/{x.max_marks}
+                  {x.pass_marks != null && ` (pass ${x.pass_marks})`}
+                </span>
+                {x.status === "pending" ? (
+                  <Badge tone="amber">{x.exam_date ? `on ${fmtDate(x.exam_date)}` : "date to be announced"}</Badge>
+                ) : (
+                  <Badge tone={x.status === "passed" ? "green" : "red"}>{x.status === "absent" ? "absent" : `${x.status} · ${x.marks}/${x.max_marks}`}</Badge>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-[11px] text-amber-800">
+            Clearing every re-exam promotes {c.name.split(" ")[0]} to {supp[0].target_class ?? "the next class"}; otherwise they stay in {supp[0].class_name}.
+          </p>
+        </div>
+      )}
+      {!supp.length && c.awaitingPromotion && (
+        <div className="rounded-xl bg-sky-50 p-3 text-xs text-sky-900 ring-1 ring-sky-200">
+          <span className="font-semibold">{c.awaitingPromotion}</span> results are out. The school will confirm promotion soon.
+        </div>
+      )}
+      {latest && (
+        <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-slate-900">
+              {latest.year_name}: {latest.class_name}
+              {latest.promoted_to_class_name && ` → ${latest.promoted_to_class_name}`}
+            </p>
+            <Badge tone={YEAR_RESULT[latest.result]?.tone ?? "slate"}>{YEAR_RESULT[latest.result]?.label ?? latest.result}</Badge>
+          </div>
+          {latest.remarks && <p className="mt-1 text-xs text-slate-500">{latest.remarks}</p>}
+          {years.length > 1 && (
+            <>
+              <button className="mt-1.5 text-xs font-semibold text-brand" onClick={() => setMore(!more)}>
+                {more ? "Hide earlier years" : `Earlier years (${years.length - 1})`}
+              </button>
+              {more && (
+                <ul className="mt-1.5 space-y-1 text-xs text-slate-600">
+                  {years.slice(1).map((y, i) => (
+                    <li key={i} className="flex justify-between gap-2">
+                      <span>
+                        {y.year_name}: {y.class_name}
+                        {y.promoted_to_class_name && ` → ${y.promoted_to_class_name}`}
+                      </span>
+                      <span className="font-medium">{YEAR_RESULT[y.result]?.label ?? y.result}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -397,7 +480,10 @@ export function DashboardPage() {
                       <div className="flex items-center gap-3">
                         <Avatar name={c.name} size={40} />
                         <div>
-                          <p className="font-semibold text-slate-900">{c.name}</p>
+                          <p className="font-semibold text-slate-900">
+                            {c.name}
+                            {c.classes?.length > 0 && <span className="ml-2 chip bg-brand-soft text-brand">{c.classes.join(", ")}</span>}
+                          </p>
                           <p className="text-xs text-slate-500">
                             {c.pending} assignment(s) pending
                             {Number(c.fees_due_paise) > 0 && ` · ${inr(c.fees_due_paise)} fees due`}
@@ -411,6 +497,7 @@ export function DashboardPage() {
                         </div>
                         <Progress value={c.attendanceRate ?? 0} tone={c.attendanceRate == null ? "brand" : c.attendanceRate >= 75 ? "green" : "amber"} />
                       </div>
+                      <ChildStanding c={c} />
                       <div className="mt-3 flex gap-2">
                         <Link to={`/report-card?studentId=${c.student_id}`} className="btn-ghost btn-sm">
                           Report card
