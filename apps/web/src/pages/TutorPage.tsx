@@ -58,6 +58,7 @@ export function TutorPage() {
   return (
     <div className="flex h-[calc(100vh-8rem)] flex-col">
       <PageTitle
+        icon="sparkles"
         title="AI Teacher"
         subtitle="Explanations grounded in your approved course material."
         action={

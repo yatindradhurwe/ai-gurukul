@@ -10,7 +10,7 @@ export function ResultsPage() {
   if (progress.loading) return <Spinner />;
   return (
     <div className="space-y-6">
-      <PageTitle title="Results" subtitle="Syllabus coverage, mastery and what to work on next." />
+      <PageTitle title="Results" icon="trending" subtitle="Syllabus coverage, mastery and what to work on next." />
       <ErrorNote message={progress.error} />
 
       <section className="card">

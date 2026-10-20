@@ -30,15 +30,15 @@ export function ClassesPage() {
 
   return (
     <div className="space-y-6">
-      <PageTitle title="Classes" subtitle={manage ? "Live classes taught by your AI teacher, with doubt clearing for every student." : "Join live classes and ask the AI teacher your doubts."} />
-      <ErrorNote message={error} />
+      <PageTitle title="Live classes" icon="video" subtitle={manage ? "Live classes taught by your AI teacher, with doubt clearing for every student." : "Join live classes and ask the AI teacher your doubts."} />
+      <ErrorNote message={error ?? classes.error} />
       {manage && (
         <form onSubmit={create} className="card flex gap-2">
           <input className="input" placeholder="New class name, e.g. 8-A Science" required value={name} onChange={(e) => setName(e.target.value)} />
           <button className="btn">Create class</button>
         </form>
       )}
-      {list.length === 0 && <Empty title="No classes yet">{manage ? "Create a class, add students and schedule a live AI lesson." : "Your teacher hasn't added you to a class yet."}</Empty>}
+      {!classes.error && list.length === 0 && <Empty title="No classes yet">{manage ? "Create a class, add students and schedule a live AI lesson." : "Your teacher hasn't added you to a class yet."}</Empty>}
       <div className="grid gap-4 md:grid-cols-2">
         {list.map((c: any) => (
           <div key={c.id} className={`card ${selected === c.id ? "ring-2 ring-brand" : ""}`}>

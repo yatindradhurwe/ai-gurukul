@@ -24,7 +24,7 @@ export function PlatformAdminPage() {
 
   return (
     <div className="space-y-6">
-      <PageTitle title="Platform admin" subtitle="All organisations on AI Gurukul. Access to this console is audit-logged." />
+      <PageTitle title="Platform admin" icon="shield" subtitle="All organisations on AI Gurukul. Access to this console is audit-logged." />
       <div className="flex gap-2 text-sm">
         {(["tenants", "audit", "usage"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={`chip px-3 py-1 ${tab === t ? "bg-brand text-white" : "bg-slate-100"}`}>

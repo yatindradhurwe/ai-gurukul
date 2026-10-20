@@ -56,4 +56,6 @@ export const api = {
   get: (s: Session, url: string) => request(app).get(url).set(s.headers),
   post: (s: Session, url: string, body: object = {}) => request(app).post(url).set(s.headers).send(body),
   patch: (s: Session, url: string, body: object = {}) => request(app).patch(url).set(s.headers).send(body),
+  put: (s: Session, url: string, body: object = {}) => request(app).put(url).set(s.headers).send(body),
+  delete: (s: Session, url: string) => request(app).delete(url).set(s.headers),
 };

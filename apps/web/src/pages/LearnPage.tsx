@@ -11,7 +11,7 @@ export function LearnPage() {
   if (chapters.loading) return <Spinner />;
   return (
     <div>
-      <PageTitle title="Learn" subtitle="Your syllabus, chapter by chapter." />
+      <PageTitle title="Courses" icon="book" subtitle="Your syllabus, chapter by chapter." />
       <ErrorNote message={chapters.error} />
       <div className="space-y-3">
         {chapters.data?.chapters.map((c: any) => (

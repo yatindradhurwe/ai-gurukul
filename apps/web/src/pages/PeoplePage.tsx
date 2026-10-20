@@ -42,7 +42,7 @@ export function PeoplePage() {
 
   return (
     <div className="space-y-6">
-      <PageTitle title="People" subtitle={`Everyone in ${tenant?.name ?? "your organisation"}.`} />
+      <PageTitle title="People" icon="users" subtitle={`Everyone in ${tenant?.name ?? "your organisation"}.`} />
       <form onSubmit={send} className="card grid gap-2 md:grid-cols-[1fr_200px_auto]">
         <input className="input" type="email" required placeholder="Email to invite" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>

@@ -157,6 +157,34 @@ Every route here accepts an optional `studentId` for a parent or staff caller. S
 | `doubt.private` | the asking student only |
 | `safety.alert` | staff only |
 
+## School records
+
+Teachers manage records for the classes they teach; owners and admins for every class. Students see their own classes; parents see a consented child's records (pass `studentId`).
+
+| Method | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/dashboard` | member | Role-aware home screen: `organization`, `teaching`, `student`, `children` sections appear only when the role can see them |
+| GET | `/announcements` | member | Whole-school and class notices for the caller's audience, with `read` and `unread` count |
+| POST | `/announcements` | announcements.manage | `{title, body, audience: all\|staff\|students\|parents, classId?, pinned?}`. Teachers must give a class they teach. |
+| POST | `/announcements/:id/read` | member | |
+| DELETE | `/announcements/:id` | announcements.manage | Author or admin |
+| GET | `/assignments?classId&studentId` | classes.manage / classes.attend / reports.children | Staff get submission counts; students and parents get each assignment's `state` |
+| POST | `/assignments` | classes.manage | `{classId, title, description?, dueAt?, maxPoints}` |
+| GET | `/assignments/:id?studentId` | as above | Staff get every enrolled student's submission |
+| PATCH / DELETE | `/assignments/:id` | classes.manage | `status: published\|closed` stops new submissions |
+| POST | `/assignments/:id/submit` | classes.attend | `{content, linkUrl?}`; can be resubmitted until graded |
+| POST | `/assignments/:id/submissions/:submissionId/grade` | classes.manage | `{points, feedback?}` |
+| GET / POST | `/attendance/classes/:classId?date` | classes.manage | Roster for a day / `{date?, records: [{studentId, status: present\|absent\|late\|excused, note?}]}` (no future dates) |
+| GET | `/attendance/classes/:classId/report?from&to` | classes.manage | Rate per student. Late counts as attended; excused days are left out. |
+| GET | `/attendance/students?studentId` | self / parent / staff | Summary and recent days |
+| GET | `/timetable?classId` | member | Weekly periods of the caller's classes |
+| POST / DELETE | `/timetable`, `/timetable/:id` | classes.manage | `{classId, dayOfWeek: 1–7, startTime, endTime, subject, room?, teacherId?}`. Overlaps for the class or teacher are refused (409). |
+| GET | `/gradebook/classes/:classId?term` | classes.manage | Columns × students with percentage and grade |
+| POST | `/gradebook/classes/:classId/items` | classes.manage | `{title, term, category, maxMarks, date?}` |
+| PUT | `/gradebook/items/:id/scores` | classes.manage | `{scores: [{studentId, marks \| null, remarks?}]}` |
+| DELETE | `/gradebook/items/:id` | classes.manage | |
+| GET | `/gradebook/report-card?studentId&term` | self / parent / staff | Per-class marks with CBSE grade bands (A1–E), overall, attendance and homework |
+
 ## Parents
 
 | Method | Path | Permission | Notes |

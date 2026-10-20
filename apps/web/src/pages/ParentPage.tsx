@@ -27,7 +27,7 @@ export function ParentPage() {
   if (children.loading) return <Spinner />;
   return (
     <div className="space-y-6">
-      <PageTitle title="Children" subtitle="Progress, upcoming exams and weekly reports." action={<button className="btn" onClick={() => setShowForm(!showForm)}>+ Add child</button>} />
+      <PageTitle title="My children" icon="heart" subtitle="Progress, upcoming exams and weekly reports." action={<button className="btn" onClick={() => setShowForm(!showForm)}>+ Add child</button>} />
       {showForm && (
         <form onSubmit={add} className="card grid gap-3 md:grid-cols-2">
           <div>

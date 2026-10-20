@@ -21,7 +21,7 @@ export function StudentHome() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Namaste, {user?.name.split(" ")[0]} 👋</h1>
+        <h1 className="font-display text-3xl font-semibold tracking-tight text-slate-900">Namaste, {user?.name.split(" ")[0]} 👋</h1>
         <p className="text-sm text-slate-500">Here's your day.</p>
       </div>
       <ErrorNote message={dash.error} />
@@ -111,7 +111,7 @@ export function StudentHome() {
           <h2 className="text-xs font-medium uppercase tracking-wide text-white/80">Stuck on something?</h2>
           <p className="mt-2 text-lg font-medium">Ask your AI teacher</p>
           <p className="text-sm text-white/80">Answers come from your approved course material, with sources.</p>
-          <Link to="/tutor" className="mt-4 inline-flex rounded-xl bg-white px-4 py-2 text-sm font-medium text-brand">
+          <Link to="/tutor" className="mt-4 inline-flex rounded-xl bg-surface px-4 py-2 text-sm font-medium text-brand">
             Ask a question →
           </Link>
         </section>

@@ -33,7 +33,7 @@ export function ContentPage() {
 
   return (
     <div className="space-y-6">
-      <PageTitle title="Content" subtitle="Notes uploaded here are indexed and, once approved, used by the AI teacher with citations." />
+      <PageTitle title="Content" icon="folder" subtitle="Notes uploaded here are indexed and, once approved, used by the AI teacher with citations." />
       {can("content.manage") && (
         <form onSubmit={upload} className="card grid gap-3 md:grid-cols-2">
           <select className="input" required value={chapterId} onChange={(e) => setChapterId(e.target.value)}>

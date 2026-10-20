@@ -25,7 +25,7 @@ export function JoinPage() {
 
   return (
     <div className="mx-auto max-w-lg space-y-4">
-      <PageTitle title="Join an organisation" subtitle={`Signed in as ${user?.email}. The invitation must be for this email.`} />
+      <PageTitle title="Join an organisation" icon="users" subtitle={`Signed in as ${user?.email}. The invitation must be for this email.`} />
       <div className="card space-y-3">
         <input className="input font-mono text-xs" placeholder="Invitation code" value={code} onChange={(e) => setCode(e.target.value)} />
         <ErrorNote message={error} />

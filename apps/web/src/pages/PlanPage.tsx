@@ -58,6 +58,7 @@ export function PlanPage() {
   return (
     <div className="space-y-6">
       <PageTitle
+        icon="calendar"
         title="Study Plan"
         subtitle="Built from your syllabus, results, exam dates and real available time."
         action={

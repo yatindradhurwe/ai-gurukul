@@ -58,6 +58,86 @@ async function ensureUser(db: Db, u: DemoUser, password: string, reset: boolean)
   return { id: row.id, password };
 }
 
+/**
+ * Sample timetable, announcements, homework, attendance and marks so every screen has
+ * something to show. Added once: skipped when Demo School already has announcements.
+ */
+async function seedSchoolRecords(db: Db, c: { tenantId: string; classId: string; ids: Record<string, string>; s1: string; s2: string }) {
+  const done = await db.query(`SELECT 1 FROM announcements WHERE tenant_id = $1 LIMIT 1`, [c.tenantId]);
+  if (done.rowCount) return;
+  const { tenantId: t, classId: cls, ids, s1, s2 } = c;
+
+  const periods: [number, string, string, string, string][] = [
+    [1, "09:00", "09:45", "Science", "Lab 1"],
+    [2, "10:00", "10:45", "Science", "Room 8A"],
+    [3, "09:00", "09:45", "Science — practical", "Lab 1"],
+    [4, "11:00", "11:45", "Science", "Room 8A"],
+    [5, "09:00", "09:45", "Science — revision", "Room 8A"],
+  ];
+  for (const [day, start, end, subject, room] of periods) {
+    await db.query(`INSERT INTO timetable_slots (tenant_id, class_id, day_of_week, start_time, end_time, subject, room) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [t, cls, day, start, end, subject, room]);
+  }
+
+  await db.query(
+    `INSERT INTO announcements (tenant_id, class_id, title, body, audience, pinned, created_by) VALUES
+       ($1, NULL, 'Welcome to the new term', 'Classes begin at 8:45 am. Please make sure your child carries the school ID card every day.', 'all', true, $2),
+       ($1, $3, 'Unit test on Friday', 'Chapter 11 — Force and Pressure. Revise the worked examples and bring a geometry box.', 'students', false, $4)`,
+    [t, ids.principal, cls, ids.teacher],
+  );
+
+  const hw = (
+    await db.query(
+      `INSERT INTO assignments (tenant_id, class_id, title, description, due_at, max_points, created_by) VALUES
+         ($1,$2,'Pressure in daily life','List five everyday examples where pressure is increased or reduced, and explain each in one line.', now() + interval '3 days', 10, $3),
+         ($1,$2,'Worksheet: force and area','Solve questions 1–8 from the worksheet shared in class.', now() - interval '2 days', 20, $3)
+       RETURNING id`,
+      [t, cls, ids.teacher],
+    )
+  ).rows;
+  await db.query(
+    `INSERT INTO assignment_submissions (tenant_id, assignment_id, student_id, content, points, feedback, graded_by, graded_at)
+     VALUES ($1,$2,$3,'Answers to questions 1–8 attached in class.', 17, 'Good work — recheck the units in question 6.', $4, now())`,
+    [t, hw[1].id, s1, ids.teacher],
+  );
+
+  // Five school days of attendance, ending yesterday (today is left for the teacher to mark).
+  const pattern = [
+    ["present", "present"],
+    ["present", "late"],
+    ["late", "present"],
+    ["present", "absent"],
+    ["present", "present"],
+  ];
+  for (let i = 0; i < pattern.length; i++) {
+    for (const [sid, status] of [[s1, pattern[i][0]], [s2, pattern[i][1]]]) {
+      await db.query(
+        `INSERT INTO attendance_records (tenant_id, class_id, student_id, date, status, marked_by)
+         VALUES ($1,$2,$3,(now() AT TIME ZONE 'Asia/Kolkata')::date - $4::int,$5,$6) ON CONFLICT DO NOTHING`,
+        [t, cls, sid, i + 1, status, ids.teacher],
+      );
+    }
+  }
+
+  const items = (
+    await db.query(
+      `INSERT INTO grade_items (tenant_id, class_id, title, term, category, max_marks, date, created_by) VALUES
+         ($1,$2,'Unit test 1 — Crop production','Term 1','test',20,(now() - interval '20 days')::date,$3),
+         ($1,$2,'Project — Model of a water cycle','Term 1','project',30,(now() - interval '10 days')::date,$3)
+       RETURNING id`,
+      [t, cls, ids.teacher],
+    )
+  ).rows;
+  const marks: [string, string, number, string | null][] = [
+    [items[0].id, s1, 18, "Excellent"],
+    [items[0].id, s2, 14, null],
+    [items[1].id, s1, 26, "Creative model"],
+    [items[1].id, s2, 21, "Label the diagram"],
+  ];
+  for (const [item, sid, m, remarks] of marks) {
+    await db.query(`INSERT INTO grade_scores (tenant_id, item_id, student_id, marks, remarks, updated_by) VALUES ($1,$2,$3,$4,$5,$6)`, [t, item, sid, m, remarks, ids.teacher]);
+  }
+}
+
 export async function setupDemo(opts: { reset?: boolean; password?: string; superadminPassword?: string } = {}) {
   await seed(() => {});
   const db = await pool.connect();
@@ -117,6 +197,7 @@ export async function setupDemo(opts: { reset?: boolean; password?: string; supe
     if (lesson && !pending.rowCount) {
       await db.query(`INSERT INTO live_sessions (tenant_id, class_id, lesson_id, title, created_by) VALUES ($1,$2,$3,$4,$5)`, [tenant.id, cls.id, lesson.id, lesson.title, ids.teacher]);
     }
+    await seedSchoolRecords(db, { tenantId: tenant.id, classId: cls.id, ids, s1, s2 });
     await db.query("COMMIT");
   } catch (err) {
     await db.query("ROLLBACK");

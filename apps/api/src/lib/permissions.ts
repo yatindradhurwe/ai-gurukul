@@ -20,6 +20,7 @@ export const PERMISSIONS = [
   "usage.read",
   "classes.manage",
   "classes.attend",
+  "announcements.manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -29,14 +30,15 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   tenant_admin: [
     "members.manage", "curriculum.read", "content.manage", "assessments.manage",
     "planner.manage_students", "reports.class", "reports.tenant", "usage.read", "classes.manage",
+    "announcements.manage",
   ],
   teacher: [
     "curriculum.read", "content.manage", "assessments.manage", "assessments.review",
-    "planner.manage_students", "reports.class", "classes.manage",
+    "planner.manage_students", "reports.class", "classes.manage", "announcements.manage",
   ],
   // Staff / HR: people administration and organisation reports, but no access to
   // individual students' academic records, content or classes.
-  staff: ["curriculum.read", "members.manage", "reports.tenant", "usage.read"],
+  staff: ["curriculum.read", "members.manage", "reports.tenant", "usage.read", "announcements.manage"],
   content_reviewer: ["curriculum.read", "content.review"],
   parent: ["curriculum.read", "reports.children", "tenant.billing"],
   student: ["curriculum.read", "tutor.use", "assessments.take", "planner.self", "reports.self", "classes.attend"],

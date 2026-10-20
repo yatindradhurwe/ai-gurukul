@@ -20,6 +20,12 @@ import { billingRouter, billingWebhookRouter } from "./modules/billing/routes.js
 import { contentRouter } from "./modules/content/routes.js";
 import { coursesRouter, curriculumRouter } from "./modules/curriculum/routes.js";
 import { classesRouter, liveRouter } from "./modules/live/routes.js";
+import { announcementsRouter } from "./modules/lms/announcements.js";
+import { assignmentsRouter } from "./modules/lms/assignments.js";
+import { attendanceRouter } from "./modules/lms/attendance.js";
+import { dashboardRouter } from "./modules/lms/dashboard.js";
+import { gradebookRouter } from "./modules/lms/gradebook.js";
+import { timetableRouter } from "./modules/lms/timetable.js";
 import { parentsRouter } from "./modules/parents/routes.js";
 import { tenantsRouter } from "./modules/tenants/routes.js";
 import { usageRouter } from "./modules/usage/routes.js";
@@ -60,6 +66,12 @@ export function createApp() {
   app.use("/api/v1/usage", tenantScoped, usageRouter);
   app.use("/api/v1/classes", tenantScoped, classesRouter);
   app.use("/api/v1/live", tenantScoped, liveRouter);
+  app.use("/api/v1/dashboard", tenantScoped, dashboardRouter);
+  app.use("/api/v1/announcements", tenantScoped, announcementsRouter);
+  app.use("/api/v1/assignments", tenantScoped, assignmentsRouter);
+  app.use("/api/v1/attendance", tenantScoped, attendanceRouter);
+  app.use("/api/v1/timetable", tenantScoped, timetableRouter);
+  app.use("/api/v1/gradebook", tenantScoped, gradebookRouter);
 
   // Single-app deployments: serve the built React app and fall back to index.html for client routes.
   const webDist = env.WEB_DIST_DIR ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");

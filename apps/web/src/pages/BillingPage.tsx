@@ -22,7 +22,7 @@ export function BillingPage() {
   if (plans.loading) return <Spinner />;
   return (
     <div className="space-y-6">
-      <PageTitle title="Plan & billing" subtitle={`Current plan: ${sub.data?.current.planCode ?? "…"}`} />
+      <PageTitle title="Plan & billing" icon="card" subtitle={`Current plan: ${sub.data?.current.planCode ?? "…"}`} />
       {usage.data && (
         <section className="card grid gap-4 md:grid-cols-3">
           {Object.entries(usage.data.quotas).map(([k, q]: [string, any]) => (

@@ -15,7 +15,7 @@ export function ChildReportPage() {
       <Link to="/children" className="text-sm text-slate-500">
         ← Children
       </Link>
-      <PageTitle title={`${r.student.name}'s weekly report`} subtitle={`${r.period.from} to ${r.period.to}`} />
+      <PageTitle icon="chart" title={`${r.student.name}'s weekly report`} subtitle={`${r.period.from} to ${r.period.to}`} />
       <div className="grid gap-4 md:grid-cols-4">
         <Tile label="Tasks completed" value={`${r.studyTasks.completed}/${r.studyTasks.planned}`} />
         <Tile label="Minutes studied" value={r.studyTasks.minutes_studied} />
