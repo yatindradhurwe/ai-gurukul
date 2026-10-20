@@ -3,7 +3,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { liveHub } from "../src/modules/live/events.js";
 import { catalogue, defaultSubjects } from "../src/modules/school/book-catalogue.js";
-import { gradeNumber } from "../src/modules/school/directory.js";
+import { gradeNumber, sessionName } from "../src/modules/school/directory.js";
 import { api, app, dbAvailable, login, register, resetDb, sql, uniqueEmail, type Session } from "./helpers.js";
 
 describe("grade numbers", () => {
@@ -13,6 +13,15 @@ describe("grade numbers", () => {
     expect(gradeNumber(null, "Class 3 Rose")).toBe(3);
     expect(gradeNumber(null, "Chess club")).toBeNull();
     expect(gradeNumber("Nursery", "Nursery A")).toBeNull();
+  });
+});
+
+describe("academic session names", () => {
+  it("starts the session in April", () => {
+    expect(sessionName("2026-10-20")).toBe("2026-27");
+    expect(sessionName("2027-03-31")).toBe("2026-27");
+    expect(sessionName("2027-04-01")).toBe("2027-28");
+    expect(sessionName("2099-06-01")).toBe("2099-00");
   });
 });
 
@@ -192,6 +201,37 @@ describe.skipIf(!dbAvailable)("school directory", () => {
     // 8-B follows CBSE, so ICSE books don't show; the hand-added book still does.
     expect(after.subjects.find((s: any) => s.subject === "Science").books.map((b: any) => b.title)).toEqual(["Science Textbook for Class VIII", "Curiosity — Class VIII"]);
     await api.delete(owner, `/api/v1/directory/classes/${all.find((c: any) => c.name === "6-B").id}`).expect(204);
+  });
+
+  it("records full staff details", async () => {
+    await api.patch(owner, `/api/v1/directory/staff/${teacher.userId}`, { designation: "PGT Science", qualification: "M.Sc., B.Ed.", experienceYears: 8, gender: "female", emergencyContactPhone: "9800000000" }).expect(200);
+    await api.patch(teacher, `/api/v1/directory/staff/${teacher.userId}`, { designation: "Head" }).expect(403);
+    const p = (await api.get(owner, `/api/v1/directory/staff/${teacher.userId}`).expect(200)).body;
+    expect(p.staff).toMatchObject({ designation: "PGT Science", qualification: "M.Sc., B.Ed.", experience_years: 8, employee_code: "EMP-0001" });
+    expect(p.attendance).toMatchObject({ present: 0 });
+    // Teachers can open their own record.
+    await api.get(teacher, `/api/v1/directory/staff/${teacher.userId}`).expect(200);
+    await api.get(teacher, `/api/v1/directory/staff/${other.userId}`).expect(403);
+  });
+
+  it("promotes a student and keeps last year's report", async () => {
+    const sid = profile[s1.userId];
+    await sql(`INSERT INTO attendance_records (tenant_id, class_id, student_id, date, status, marked_by) VALUES ($1,$2,$3,'2026-07-01','present',$4), ($1,$2,$3,'2026-07-02','absent',$4)`, [schoolId, class8, sid, other.userId]);
+    await api.post(owner, "/api/v1/directory/classes/setup", { grades: [9], sections: ["A"], importBooks: false }).expect(201);
+    const c9 = (await api.get(owner, "/api/v1/directory/classes").expect(200)).body.classes.find((c: any) => c.name === "9-A");
+    await api.post(owner, "/api/v1/directory/promotions", { fromClassId: class8, students: [{ studentId: sid, result: "promoted" }] }).expect(400); // no next class
+    await api.post(teacher, "/api/v1/directory/promotions", { fromClassId: class8, toClassId: c9.id, students: [{ studentId: sid, result: "promoted" }] }).expect(403);
+    const r = (await api.post(owner, "/api/v1/directory/promotions", { fromClassId: class8, toClassId: c9.id, students: [{ studentId: sid, result: "promoted", remarks: "Good year" }] }).expect(201)).body;
+    expect(r.students).toEqual([{ studentId: sid, result: "promoted" }]);
+    await api.post(owner, "/api/v1/directory/promotions", { fromClassId: class8, toClassId: c9.id, students: [{ studentId: sid, result: "promoted" }] }).expect(400); // no longer in 8-A
+
+    const p = (await api.get(owner, `/api/v1/directory/students/${sid}`).expect(200)).body;
+    expect(p.classes.map((c: any) => c.name)).toEqual(["9-A"]);
+    expect(p.attendance.counted).toBe(0); // the new class starts clean
+    expect(p.history).toHaveLength(1);
+    expect(p.history[0]).toMatchObject({ class_name: "8-A", result: "promoted", promoted_to_class_name: "9-A", remarks: "Good year" });
+    expect(p.history[0].report.attendance).toMatchObject({ attended: 1, counted: 2, rate: 50 });
+    expect(p.extras.fees).toMatchObject({ due: 0 });
   });
 
   it("keeps the directory inside the organization", async () => {

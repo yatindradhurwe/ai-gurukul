@@ -52,6 +52,13 @@ describe.skipIf(!dbAvailable)("vertical slice: one student, one lesson, one exam
     lessonId = cont.body.lesson.id;
     const lesson = await api.get(student, `/api/v1/courses/lessons/${lessonId}`).expect(200);
     expect(lesson.body.lesson.content.length).toBeGreaterThan(50);
+
+    // The Courses page loads the whole course, with the lesson just opened marked in progress.
+    const overview = (await api.get(student, "/api/v1/curriculum/overview").expect(200)).body;
+    expect(overview.tracksProgress).toBe(true);
+    expect(overview.subjects[0].chapters).toHaveLength(6);
+    const lessons = overview.subjects.flatMap((s: any) => s.chapters.flatMap((c: any) => c.topics.flatMap((t: any) => t.lessons)));
+    expect(lessons.find((l: any) => l.id === lessonId).status).toBe("in_progress");
   });
 
   it("3. answers a question grounded in approved content, with citations", async () => {

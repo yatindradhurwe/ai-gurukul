@@ -161,6 +161,8 @@ directoryRouter.get(
 const STAFF_SQL = `
   SELECT u.id AS user_id, u.name, u.email, array_agg(DISTINCT m.role_id) AS roles,
          p.employee_code, p.designation, p.department, p.date_joined, p.phone, p.blood_group, COALESCE(p.status, 'active') AS status,
+         p.date_of_birth, p.gender, p.address, p.qualification, p.specialization, p.experience_years, p.previous_school,
+         p.emergency_contact_name, p.emergency_contact_phone,
          COALESCE((SELECT json_agg(json_build_object('id', cs.id, 'classId', c.id, 'className', c.name, 'grade', c.grade, 'subject', cs.subject) ORDER BY c.name, cs.subject)
                      FROM class_subjects cs JOIN classes c ON c.id = cs.class_id WHERE cs.teacher_id = u.id), '[]') AS subjects,
          COALESCE((SELECT json_agg(json_build_object('id', c.id, 'name', c.name) ORDER BY c.name) FROM classes c WHERE c.teacher_id = u.id), '[]') AS class_teacher_of,
@@ -198,9 +200,89 @@ directoryRouter.get(
         )
       ).rows;
       const documents = await listDocuments(db, { staffId: req.params.userId, adminView: canManage(req) });
-      return { staff: member, timetable, documents };
+      const year = await currentYear(db);
+      const attendance = (
+        await db.query(
+          `SELECT count(*) FILTER (WHERE status = 'present')::int AS present, count(*) FILTER (WHERE status = 'absent')::int AS absent,
+                  count(*) FILTER (WHERE status = 'half_day')::int AS half_day, count(*) FILTER (WHERE status = 'leave')::int AS on_leave,
+                  count(*) FILTER (WHERE status = 'present' AND date_trunc('month', date) = date_trunc('month', (now() AT TIME ZONE 'Asia/Kolkata')::date))::int AS present_this_month
+             FROM staff_attendance WHERE user_id = $1 AND ($2::date IS NULL OR date BETWEEN $2 AND $3)`,
+          [req.params.userId, year?.start ?? null, year?.end ?? null],
+        )
+      ).rows[0];
+      const leave = (
+        await db.query(
+          `SELECT leave_type, start_date, end_date, reason, status FROM leave_requests WHERE kind = 'staff' AND staff_id = $1 ORDER BY start_date DESC LIMIT 15`,
+          [req.params.userId],
+        )
+      ).rows;
+      const payslips = (await db.query(`SELECT month, net_paise, status FROM payslips WHERE user_id = $1 ORDER BY month DESC LIMIT 12`, [req.params.userId])).rows;
+      return { staff: member, timetable, documents, year: year?.name ?? null, attendance, leave, payslips: canManage(req) || self ? payslips : [] };
     });
     res.json(data);
+  }),
+);
+
+/** The principal fills in a staff member's personal and professional details (salary stays in Staff & payroll). */
+directoryRouter.patch(
+  "/staff/:userId",
+  requirePermission("directory.manage"),
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const { userId } = requireAuth(req);
+    const text = (n: number) => z.string().trim().max(n).nullish();
+    const b = parse(
+      z.object({
+        employeeCode: z.string().trim().min(1).max(30).optional(),
+        designation: text(80),
+        department: text(80),
+        dateJoined: date.nullish(),
+        phone: text(20),
+        bloodGroup: text(5),
+        dateOfBirth: date.nullish(),
+        gender: z.enum(["female", "male", "other"]).nullish(),
+        address: text(500),
+        qualification: text(200),
+        specialization: text(200),
+        experienceYears: z.number().min(0).max(60).nullish(),
+        previousSchool: text(200),
+        emergencyContactName: text(120),
+        emergencyContactPhone: text(20),
+      }),
+      req.body,
+    );
+    const row = await withTenant(tenant.id, async (db) => {
+      const member = await db.query(`SELECT 1 FROM tenant_memberships WHERE tenant_id = $1 AND user_id = $2 AND status = 'active' AND role_id = ANY($3::text[])`, [tenant.id, req.params.userId, STAFF_ROLES]);
+      if (!member.rowCount) throw notFound("Staff member");
+      const existing = (await db.query(`SELECT employee_code FROM staff_profiles WHERE user_id = $1`, [req.params.userId])).rows[0];
+      let code = b.employeeCode ?? existing?.employee_code;
+      if (!code) {
+        const n = (await db.query(`SELECT count(*)::int AS n FROM staff_profiles`)).rows[0].n;
+        code = `EMP-${String(n + 1).padStart(4, "0")}`;
+        while ((await db.query(`SELECT 1 FROM staff_profiles WHERE employee_code = $1`, [code])).rowCount) code = `EMP-${String(Number(code.slice(4)) + 1).padStart(4, "0")}`;
+      }
+      if ((await db.query(`SELECT 1 FROM staff_profiles WHERE employee_code = $1 AND user_id <> $2`, [code, req.params.userId])).rowCount) throw badRequest(`Employee code ${code} is already used`);
+      const v = [
+        b.designation ?? "", b.department ?? "", b.dateJoined ?? null, b.phone || null, b.bloodGroup || null, b.dateOfBirth ?? null, b.gender ?? null, b.address || null,
+        b.qualification || null, b.specialization || null, b.experienceYears ?? null, b.previousSchool || null, b.emergencyContactName || null, b.emergencyContactPhone || null,
+      ];
+      const r = (
+        await db.query(
+          `INSERT INTO staff_profiles (tenant_id, user_id, employee_code, designation, department, date_joined, phone, blood_group, date_of_birth, gender, address,
+                                       qualification, specialization, experience_years, previous_school, emergency_contact_name, emergency_contact_phone)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+           ON CONFLICT (tenant_id, user_id) DO UPDATE SET employee_code = EXCLUDED.employee_code, designation = EXCLUDED.designation, department = EXCLUDED.department,
+             date_joined = EXCLUDED.date_joined, phone = EXCLUDED.phone, blood_group = EXCLUDED.blood_group, date_of_birth = EXCLUDED.date_of_birth, gender = EXCLUDED.gender,
+             address = EXCLUDED.address, qualification = EXCLUDED.qualification, specialization = EXCLUDED.specialization, experience_years = EXCLUDED.experience_years,
+             previous_school = EXCLUDED.previous_school, emergency_contact_name = EXCLUDED.emergency_contact_name, emergency_contact_phone = EXCLUDED.emergency_contact_phone
+           RETURNING id, employee_code`,
+          [tenant.id, req.params.userId, code, ...v],
+        )
+      ).rows[0];
+      await audit(db, { tenantId: tenant.id, actorId: userId, action: "staff.details.update", resourceType: "staff_profile", resourceId: r.id });
+      return r;
+    });
+    res.json({ profile: row });
   }),
 );
 
@@ -236,18 +318,22 @@ directoryRouter.get(
 );
 
 /** Per-student attendance rate and gradebook percentage within a set of classes. */
-async function studentStats(db: Db, studentIds: string[], classIds: string[] | null) {
+async function studentStats(db: Db, studentIds: string[], classIds: string[] | null, year: { start: string | null; end: string | null } | null = null) {
+  const from = year?.start ?? null;
+  const to = year?.end ?? null;
   const att = await db.query(
     `SELECT student_id, ${ATTENDED_SQL}::int AS attended, ${COUNTED_SQL}::int AS counted
-       FROM attendance_records WHERE student_id = ANY($1::uuid[]) AND ($2::uuid[] IS NULL OR class_id = ANY($2::uuid[])) GROUP BY student_id`,
-    [studentIds, classIds],
+       FROM attendance_records WHERE student_id = ANY($1::uuid[]) AND ($2::uuid[] IS NULL OR class_id = ANY($2::uuid[]))
+        AND ($3::date IS NULL OR date BETWEEN $3 AND $4) GROUP BY student_id`,
+    [studentIds, classIds, from, to],
   );
   const marks = await db.query(
     `SELECT s.student_id, sum(s.marks) AS got, sum(i.max_marks) AS max
        FROM grade_scores s JOIN grade_items i ON i.id = s.item_id
       WHERE s.student_id = ANY($1::uuid[]) AND s.marks IS NOT NULL AND ($2::uuid[] IS NULL OR i.class_id = ANY($2::uuid[]))
+        AND ($3::date IS NULL OR COALESCE(i.date, i.created_at::date) BETWEEN $3 AND $4)
       GROUP BY s.student_id`,
-    [studentIds, classIds],
+    [studentIds, classIds, from, to],
   );
   const a = new Map(att.rows.map((r) => [r.student_id, r.counted ? round1((r.attended / r.counted) * 100) : null]));
   const m = new Map(marks.rows.map((r) => [r.student_id, Number(r.max) ? round1((Number(r.got) / Number(r.max)) * 100) : null]));
@@ -258,15 +344,15 @@ async function studentStats(db: Db, studentIds: string[], classIds: string[] | n
 }
 
 /** Results of every exam with papers in the given classes, for the given students. */
-async function examResults(db: Db, classIds: string[], studentIds: string[]) {
+async function examResults(db: Db, classIds: string[], studentIds: string[], year: { start: string | null; end: string | null } | null = null) {
   if (!classIds.length) return [];
   const papers = (
     await db.query(
       `SELECT p.id, p.exam_id, p.class_id, p.subject, p.max_marks, p.pass_marks, p.grade_item_id, e.name, e.term, e.status, e.start_date
          FROM exam_papers p JOIN exams e ON e.id = p.exam_id
-        WHERE p.class_id = ANY($1::uuid[]) AND e.status <> 'draft'
+        WHERE p.class_id = ANY($1::uuid[]) AND e.status <> 'draft' AND ($2::date IS NULL OR p.date BETWEEN $2 AND $3)
         ORDER BY e.start_date NULLS LAST, p.date, p.start_time`,
-      [classIds],
+      [classIds, year?.start ?? null, year?.end ?? null],
     )
   ).rows;
   const scores = await db.query(
@@ -314,7 +400,8 @@ directoryRouter.get(
     const data = await withTenant(tenant.id, async (db) => {
       const cls = (
         await db.query(
-          `SELECT c.id, c.name, c.board, c.grade, c.section, c.teacher_id, u.name AS class_teacher, u.email AS class_teacher_email, y.name AS academic_year
+          `SELECT c.id, c.name, c.board, c.grade, c.section, c.teacher_id, u.name AS class_teacher, u.email AS class_teacher_email, y.name AS academic_year,
+                  y.id AS year_id, y.start_date AS year_start, y.end_date AS year_end
              FROM classes c JOIN users u ON u.id = c.teacher_id LEFT JOIN academic_years y ON y.id = c.academic_year_id WHERE c.id = $1`,
           [req.params.id],
         )
@@ -331,29 +418,40 @@ directoryRouter.get(
         )
       ).rows;
       const ids = students.map((s) => s.student_id);
-      const stats = await studentStats(db, ids, [cls.id]);
-      const att = (await db.query(`SELECT ${ATTENDED_SQL}::int AS attended, ${COUNTED_SQL}::int AS counted, count(DISTINCT date)::int AS days FROM attendance_records WHERE class_id = $1`, [cls.id])).rows[0];
+      // A class's report covers its own academic year, or the current one (sections are often reused year to year).
+      const year = cls.year_id ? { id: cls.year_id, name: cls.academic_year, start: cls.year_start, end: cls.year_end } : await currentYear(db);
+      const from = year?.start ?? null;
+      const to = year?.end ?? null;
+      const stats = await studentStats(db, ids, [cls.id], year);
+      const att = (
+        await db.query(
+          `SELECT ${ATTENDED_SQL}::int AS attended, ${COUNTED_SQL}::int AS counted, count(DISTINCT date)::int AS days FROM attendance_records
+            WHERE class_id = $1 AND ($2::date IS NULL OR date BETWEEN $2 AND $3)`,
+          [cls.id, from, to],
+        )
+      ).rows[0];
       const items = (
         await db.query(
           `SELECT i.id, i.title, i.term, i.category, i.max_marks, i.date,
                   count(s.marks)::int AS scored, avg(s.marks) AS average, max(s.marks) AS highest
              FROM grade_items i LEFT JOIN grade_scores s ON s.item_id = i.id AND s.marks IS NOT NULL
-            WHERE i.class_id = $1 GROUP BY i.id ORDER BY i.date NULLS LAST, i.created_at`,
-          [cls.id],
+            WHERE i.class_id = $1 AND ($2::date IS NULL OR COALESCE(i.date, i.created_at::date) BETWEEN $2 AND $3)
+            GROUP BY i.id ORDER BY i.date NULLS LAST, i.created_at`,
+          [cls.id, from, to],
         )
       ).rows.map((i) => ({ ...i, average_percent: i.average == null ? null : round1((Number(i.average) / Number(i.max_marks)) * 100) }));
       const hw = (
         await db.query(
           `SELECT count(DISTINCT a.id)::int AS total, count(s.id)::int AS submissions FROM assignments a
-             LEFT JOIN assignment_submissions s ON s.assignment_id = a.id WHERE a.class_id = $1`,
-          [cls.id],
+             LEFT JOIN assignment_submissions s ON s.assignment_id = a.id WHERE a.class_id = $1 AND ($2::date IS NULL OR a.created_at::date BETWEEN $2 AND $3)`,
+          [cls.id, from, to],
         )
       ).rows[0];
-      const exams = await examResults(db, [cls.id], ids);
+      const exams = await examResults(db, [cls.id], ids, year);
       const roster = students.map((s) => ({ ...s, ...stats(s.student_id) }));
       const graded = roster.filter((s) => s.percent != null);
       return {
-        class: { ...cls, grade_number: gradeNumber(cls.grade, cls.name) },
+        class: { ...cls, grade_number: gradeNumber(cls.grade, cls.name), report_year: year?.name ?? null },
         subjects,
         students: roster,
         report: {
@@ -653,6 +751,200 @@ directoryRouter.delete(
 // ---------------------------------------------------------------------------
 // Students
 // ---------------------------------------------------------------------------
+interface YearRange {
+  id: string | null;
+  name: string;
+  start: string | null;
+  end: string | null;
+}
+
+async function currentYear(db: Db): Promise<YearRange | null> {
+  const y = (await db.query(`SELECT id, name, start_date, end_date FROM academic_years WHERE is_current LIMIT 1`)).rows[0];
+  return y ? { id: y.id, name: y.name, start: y.start_date, end: y.end_date } : null;
+}
+
+/** "2026-27" for a date, with years starting in April as Indian schools do. */
+export function sessionName(today: string): string {
+  const [y, m] = today.split("-").map(Number);
+  const start = m >= 4 ? y : y - 1;
+  return `${start}-${String((start + 1) % 100).padStart(2, "0")}`;
+}
+
+/**
+ * One student's report for a set of classes, limited to an academic year when
+ * one is given: attendance, marks per class, exam results, homework and activities.
+ * The same shape is frozen into student_year_records on promotion.
+ */
+async function studentReport(db: Db, studentId: string, classes: { id: string; name: string }[], year: YearRange | null) {
+  const classIds = classes.map((c) => c.id);
+  const from = year?.start ?? null;
+  const to = year?.end ?? null;
+  const att = (
+    await db.query(
+      `SELECT ${ATTENDED_SQL}::int AS attended, ${COUNTED_SQL}::int AS counted,
+              count(*) FILTER (WHERE status = 'absent')::int AS absent, count(*) FILTER (WHERE status = 'late')::int AS late
+         FROM attendance_records WHERE student_id = $1 AND class_id = ANY($2::uuid[]) AND ($3::date IS NULL OR date BETWEEN $3 AND $4)`,
+      [studentId, classIds, from, to],
+    )
+  ).rows[0];
+  const recent = (
+    await db.query(
+      `SELECT a.date, a.status, a.note, c.name AS class_name FROM attendance_records a JOIN classes c ON c.id = a.class_id
+        WHERE a.student_id = $1 AND a.class_id = ANY($2::uuid[]) AND a.status <> 'present' AND ($3::date IS NULL OR a.date BETWEEN $3 AND $4)
+        ORDER BY a.date DESC LIMIT 10`,
+      [studentId, classIds, from, to],
+    )
+  ).rows;
+  const items = (
+    await db.query(
+      `SELECT i.id, i.class_id, i.title, i.term, i.category, i.max_marks, i.date, sc.marks, sc.remarks
+         FROM grade_items i LEFT JOIN grade_scores sc ON sc.item_id = i.id AND sc.student_id = $1
+        WHERE i.class_id = ANY($2::uuid[]) AND ($3::date IS NULL OR COALESCE(i.date, i.created_at::date) BETWEEN $3 AND $4)
+        ORDER BY i.date NULLS LAST, i.created_at`,
+      [studentId, classIds, from, to],
+    )
+  ).rows;
+  const marks = classes.map((c) => {
+    const mine = items.filter((i) => i.class_id === c.id);
+    const scored = mine.filter((i) => i.marks != null);
+    const max = scored.reduce((t, i) => t + Number(i.max_marks), 0);
+    const got = scored.reduce((t, i) => t + Number(i.marks), 0);
+    const percent = max ? round1((got / max) * 100) : null;
+    return { classId: c.id, name: c.name, items: mine, obtained: got, max, percent, grade: gradeFor(percent) };
+  });
+  const graded = marks.filter((m) => m.percent != null);
+  const overall = graded.length ? round1(graded.reduce((t, m) => t + m.percent!, 0) / graded.length) : null;
+  const exams = (await examResults(db, classIds, [studentId], year)).map(({ students, summary, ...e }) => ({ ...e, result: students[0] ?? null, classAverage: summary.average }));
+  const hw = (
+    await db.query(
+      `SELECT count(a.*)::int AS total, count(sub.id)::int AS submitted,
+              avg(CASE WHEN sub.graded_at IS NOT NULL THEN sub.points / a.max_points END) AS avg_score
+         FROM assignments a LEFT JOIN assignment_submissions sub ON sub.assignment_id = a.id AND sub.student_id = $1
+        WHERE a.class_id = ANY($2::uuid[]) AND ($3::date IS NULL OR a.created_at::date BETWEEN $3 AND $4)`,
+      [studentId, classIds, from, to],
+    )
+  ).rows[0];
+  const activities = (
+    await db.query(
+      `SELECT a.id, a.name, a.category, a.schedule, m.role, u.name AS teacher FROM activity_members m JOIN activities a ON a.id = m.activity_id
+         LEFT JOIN users u ON u.id = a.teacher_id WHERE m.student_id = $1 ORDER BY a.name`,
+      [studentId],
+    )
+  ).rows;
+  return {
+    attendance: { ...att, rate: att.counted ? round1((att.attended / att.counted) * 100) : null, recent },
+    marks,
+    overall: { percent: overall, grade: gradeFor(overall) },
+    exams,
+    assignments: { total: hw.total, submitted: hw.submitted, averagePercent: hw.avg_score == null ? null : round1(Number(hw.avg_score) * 100) },
+    activities,
+  };
+}
+
+/** Everything else the office holds about a student: fees, library, transport, hostel and leave. */
+async function studentExtras(db: Db, s: { id: string; user_id: string }) {
+  const fees = (
+    await db.query(
+      `SELECT COALESCE(sum(i.amount_paise - i.discount_paise), 0)::bigint AS billed,
+              COALESCE(sum((SELECT COALESCE(sum(p.amount_paise), 0) FROM fee_payments p WHERE p.invoice_id = i.id)), 0)::bigint AS paid,
+              count(*) FILTER (WHERE i.due_date < (now() AT TIME ZONE 'Asia/Kolkata')::date
+                AND i.amount_paise - i.discount_paise > (SELECT COALESCE(sum(p.amount_paise), 0) FROM fee_payments p WHERE p.invoice_id = i.id))::int AS overdue
+         FROM fee_invoices i WHERE i.student_id = $1 AND i.status = 'open'`,
+      [s.id],
+    )
+  ).rows[0];
+  const library = (
+    await db.query(
+      `SELECT b.title, l.issued_at, l.due_date, l.due_date < (now() AT TIME ZONE 'Asia/Kolkata')::date AS overdue
+         FROM library_loans l JOIN library_books b ON b.id = l.book_id WHERE l.user_id = $1 AND l.returned_at IS NULL ORDER BY l.due_date`,
+      [s.user_id],
+    )
+  ).rows;
+  const transport = (
+    await db.query(
+      `SELECT r.name AS route, st.name AS stop FROM transport_assignments t JOIN transport_routes r ON r.id = t.route_id JOIN transport_stops st ON st.id = t.stop_id
+        WHERE t.student_id = $1`,
+      [s.id],
+    )
+  ).rows[0] ?? null;
+  const hostel = (
+    await db.query(
+      `SELECT h.name AS hostel, r.room_no, a.start_date FROM hostel_allocations a JOIN hostel_rooms r ON r.id = a.room_id JOIN hostels h ON h.id = r.hostel_id
+        WHERE a.student_id = $1 AND a.end_date IS NULL`,
+      [s.id],
+    )
+  ).rows[0] ?? null;
+  const leave = (
+    await db.query(
+      `SELECT kind, leave_type, start_date, end_date, reason, status FROM leave_requests WHERE student_id = $1 ORDER BY start_date DESC LIMIT 10`,
+      [s.id],
+    )
+  ).rows;
+  return { fees: { ...fees, due: Math.max(0, Number(fees.billed) - Number(fees.paid)) }, library, transport, hostel, leave };
+}
+
+// ---------------------------------------------------------------------------
+// Promotion: freeze the year's report, then move students to their next class
+// ---------------------------------------------------------------------------
+directoryRouter.post(
+  "/promotions",
+  requirePermission("directory.manage"),
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const { userId } = requireAuth(req);
+    const b = parse(
+      z.object({
+        fromClassId: z.string().uuid(),
+        toClassId: z.string().uuid().nullish(),
+        students: z
+          .array(z.object({ studentId: z.string().uuid(), result: z.enum(["promoted", "detained", "passed_out", "left"]), remarks: z.string().trim().max(1000).default("") }))
+          .min(1)
+          .max(500),
+      }),
+      req.body,
+    );
+    const out = await withTenant(tenant.id, async (db) => {
+      const from = (await db.query(`SELECT c.*, y.name AS year_name, y.start_date, y.end_date FROM classes c LEFT JOIN academic_years y ON y.id = c.academic_year_id WHERE c.id = $1`, [b.fromClassId])).rows[0];
+      if (!from) throw notFound("Class");
+      const to = b.toClassId ? (await db.query(`SELECT id, name FROM classes WHERE id = $1`, [b.toClassId])).rows[0] : null;
+      if (b.toClassId && !to) throw notFound("Next class");
+      if (b.students.some((x) => x.result === "promoted") && !to) throw badRequest("Choose the class students are promoted to");
+      if (to?.id === from.id && b.students.some((x) => x.result === "promoted")) throw badRequest("Promote students to a different class");
+      const year: YearRange =
+        (from.academic_year_id ? { id: from.academic_year_id, name: from.year_name, start: from.start_date, end: from.end_date } : null) ??
+        (await currentYear(db)) ?? { id: null, name: sessionName(new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10)), start: null, end: null };
+      const enrolled = new Set((await db.query(`SELECT student_id FROM class_enrollments WHERE class_id = $1`, [from.id])).rows.map((r) => r.student_id));
+      const done: { studentId: string; result: string }[] = [];
+      for (const st of b.students) {
+        if (!enrolled.has(st.studentId)) throw badRequest("Every student must be enrolled in the class being promoted");
+        const already = await db.query(`SELECT 1 FROM student_year_records WHERE student_id = $1 AND class_id = $2 AND year_name = $3`, [st.studentId, from.id, year.name]);
+        if (already.rowCount) throw badRequest(`A ${year.name} record for this student in ${from.name} already exists`);
+        const classes = (await db.query(`SELECT c.id, c.name FROM class_enrollments e JOIN classes c ON c.id = e.class_id WHERE e.student_id = $1 ORDER BY c.name`, [st.studentId])).rows;
+        const report = await studentReport(db, st.studentId, classes, year.start ? year : null);
+        // Detained students stay in this class unless another is chosen.
+        const target = st.result === "promoted" || (st.result === "detained" && to) ? to : null;
+        await db.query(
+          `INSERT INTO student_year_records (tenant_id, student_id, academic_year_id, year_name, class_id, class_name, grade, result, promoted_to_class_id, promoted_to_class_name, remarks, report, decided_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [tenant.id, st.studentId, year.id, year.name, from.id, from.name, from.grade, st.result, target?.id ?? null, target?.name ?? null, st.remarks, JSON.stringify(report), userId],
+        );
+        if (st.result === "detained" && !target) {
+          done.push({ studentId: st.studentId, result: st.result });
+          continue;
+        }
+        await db.query(`DELETE FROM class_enrollments WHERE class_id = $1 AND student_id = $2`, [from.id, st.studentId]);
+        if (target) {
+          await db.query(`INSERT INTO class_enrollments (tenant_id, class_id, student_id) VALUES ($1,$2,$3) ON CONFLICT (class_id, student_id) DO NOTHING`, [tenant.id, target.id, st.studentId]);
+        }
+        done.push({ studentId: st.studentId, result: st.result });
+      }
+      await audit(db, { tenantId: tenant.id, actorId: userId, action: "students.promote", resourceType: "class", resourceId: from.id, metadata: { to: to?.id ?? null, year: year.name, count: done.length } });
+      return { year: year.name, students: done };
+    });
+    res.status(201).json(out);
+  }),
+);
+
 directoryRouter.get(
   "/students",
   requirePermission("directory.manage", "classes.manage"),
@@ -721,69 +1013,26 @@ directoryRouter.get(
           [s.id],
         )
       ).rows;
-      const classIds = classes.map((c) => c.id);
-      const att = (
+      const year = await currentYear(db);
+      const report = await studentReport(db, s.id, classes, year);
+      const history = (
         await db.query(
-          `SELECT ${ATTENDED_SQL}::int AS attended, ${COUNTED_SQL}::int AS counted,
-                  count(*) FILTER (WHERE status = 'absent')::int AS absent, count(*) FILTER (WHERE status = 'late')::int AS late
-             FROM attendance_records WHERE student_id = $1`,
-          [s.id],
-        )
-      ).rows[0];
-      const recentAbsences = (
-        await db.query(
-          `SELECT a.date, a.status, a.note, c.name AS class_name FROM attendance_records a JOIN classes c ON c.id = a.class_id
-            WHERE a.student_id = $1 AND a.status <> 'present' ORDER BY a.date DESC LIMIT 10`,
+          `SELECT r.id, r.year_name, r.class_name, r.grade, r.result, r.promoted_to_class_name, r.remarks, r.report, r.created_at, u.name AS decided_by
+             FROM student_year_records r JOIN users u ON u.id = r.decided_by WHERE r.student_id = $1 ORDER BY r.created_at DESC`,
           [s.id],
         )
       ).rows;
-      const items = (
-        await db.query(
-          `SELECT i.id, i.class_id, i.title, i.term, i.category, i.max_marks, i.date, sc.marks, sc.remarks
-             FROM grade_items i LEFT JOIN grade_scores sc ON sc.item_id = i.id AND sc.student_id = $1
-            WHERE i.class_id = ANY($2::uuid[]) ORDER BY i.date NULLS LAST, i.created_at`,
-          [s.id, classIds],
-        )
-      ).rows;
-      const marks = classes.map((c) => {
-        const mine = items.filter((i) => i.class_id === c.id);
-        const scored = mine.filter((i) => i.marks != null);
-        const max = scored.reduce((t, i) => t + Number(i.max_marks), 0);
-        const got = scored.reduce((t, i) => t + Number(i.marks), 0);
-        const percent = max ? round1((got / max) * 100) : null;
-        return { classId: c.id, name: c.name, items: mine, obtained: got, max, percent, grade: gradeFor(percent) };
-      });
-      const graded = marks.filter((m) => m.percent != null);
-      const overall = graded.length ? round1(graded.reduce((t, m) => t + m.percent!, 0) / graded.length) : null;
-      const exams = (await examResults(db, classIds, [s.id])).map(({ students, summary, ...e }) => ({ ...e, result: students[0] ?? null, classAverage: summary.average }));
-      const hw = (
-        await db.query(
-          `SELECT count(a.*)::int AS total, count(sub.id)::int AS submitted,
-                  avg(CASE WHEN sub.graded_at IS NOT NULL THEN sub.points / a.max_points END) AS avg_score
-             FROM assignments a JOIN class_enrollments e ON e.class_id = a.class_id AND e.student_id = $1
-             LEFT JOIN assignment_submissions sub ON sub.assignment_id = a.id AND sub.student_id = $1`,
-          [s.id],
-        )
-      ).rows[0];
-      const activities = (
-        await db.query(
-          `SELECT a.id, a.name, a.category, a.schedule, m.role, u.name AS teacher FROM activity_members m JOIN activities a ON a.id = m.activity_id
-             LEFT JOIN users u ON u.id = a.teacher_id WHERE m.student_id = $1 ORDER BY a.name`,
-          [s.id],
-        )
-      ).rows;
+      const extras = admin ? await studentExtras(db, s) : null;
       const canSeeDocs = admin || settings.teachersCanViewDocuments;
       const documents = canSeeDocs ? await listDocuments(db, { studentId: s.id, adminView: admin }) : [];
       return {
         student: hideContacts ? { ...s, email: null, guardian_phone: null, address: null } : s,
         parents,
         classes,
-        attendance: { ...att, rate: att.counted ? round1((att.attended / att.counted) * 100) : null, recent: recentAbsences },
-        marks,
-        overall: { percent: overall, grade: gradeFor(overall) },
-        exams,
-        assignments: { total: hw.total, submitted: hw.submitted, averagePercent: hw.avg_score == null ? null : round1(Number(hw.avg_score) * 100) },
-        activities,
+        year: year && { id: year.id, name: year.name, start: year.start, end: year.end },
+        ...report,
+        history,
+        extras,
         documents,
         permissions: {
           edit: admin,

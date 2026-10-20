@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Icon, type IconName } from "../components/icons";
-import { Avatar, Badge, Empty, ErrorNote, Field, Modal, PageTitle, Progress, SectionCard, Spinner, StatCard, SuccessNote, Tabs, fmtDate, pct100, toneForPercent, DAYS, type Tone } from "../components/ui";
+import { Avatar, Badge, Empty, ErrorNote, Field, Modal, PageTitle, Progress, SectionCard, Spinner, StatCard, SuccessNote, Tabs, fmtDate, inr, pct100, toneForPercent, DAYS, type Tone } from "../components/ui";
 import { api, apiBlob } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/useApi";
@@ -881,6 +881,7 @@ export function DirectoryClassPage() {
   const d = useApi<any>(`/directory/classes/${id}`);
   const [tab, setTab] = useState<"subjects" | "students" | "report" | "exams">("subjects");
   const [editing, setEditing] = useState(false);
+  const [promoting, setPromoting] = useState(false);
   if (d.loading && !d.data) return <Spinner />;
   if (!d.data) return <ErrorNote message={d.error} />;
   const { class: c, subjects, students, report, exams } = d.data;
@@ -890,12 +891,17 @@ export function DirectoryClassPage() {
       <PageTitle
         title={c.name}
         icon="graduation"
-        subtitle={[c.grade_number ? `Class ${c.grade_number}` : null, c.section ? `Section ${c.section}` : null, c.board, c.academic_year].filter(Boolean).join(" · ") || "Class"}
+        subtitle={[c.grade_number ? `Class ${c.grade_number}` : null, c.section ? `Section ${c.section}` : null, c.board, c.report_year && `Session ${c.report_year}`].filter(Boolean).join(" · ") || "Class"}
         action={
           <>
             <Link className="btn-ghost" to={`/report-card`}>
               <Icon name="printer" size={16} /> Report cards
             </Link>
+            {admin && students.length > 0 && (
+              <button className="btn" onClick={() => setPromoting(true)}>
+                <Icon name="trending" size={16} /> Promote students
+              </button>
+            )}
             {admin && (
               <button className="btn-ghost" onClick={() => setEditing(true)}>
                 <Icon name="sliders" size={16} /> Edit section
@@ -923,6 +929,7 @@ export function DirectoryClassPage() {
       {tab === "subjects" && <SubjectList cls={c} subjects={subjects} onChange={d.reload} />}
       {tab === "students" && <StudentTable rows={students} showClasses={false} />}
       {editing && <EditSection c={c} onClose={() => setEditing(false)} onSaved={d.reload} />}
+      {promoting && <PromoteStudents c={c} students={students} onClose={() => setPromoting(false)} onDone={d.reload} />}
       {tab === "report" && <ClassReport items={report.gradeItems} />}
       {tab === "exams" && <ExamReports exams={exams} students={students} />}
     </div>
@@ -1319,6 +1326,120 @@ function EditSection({ c, onClose, onSaved }: { c: any; onClose: () => void; onS
   );
 }
 
+function PromoteStudents({ c, students, onClose, onDone }: { c: any; students: any[]; onClose: () => void; onDone: () => void }) {
+  const classes = useApi<any>("/directory/classes");
+  const options: any[] = (classes.data?.classes ?? []).filter((x: any) => x.id !== c.id);
+  const next = c.grade_number ? options.filter((x) => x.grade_number === c.grade_number + 1) : [];
+  const [toClassId, setToClassId] = useState("");
+  const target = toClassId || (next.length === 1 ? next[0].id : "");
+  const [rows, setRows] = useState<Record<string, { result: string; remarks: string; include: boolean }>>(() =>
+    Object.fromEntries(students.map((s) => [s.student_id, { result: c.grade_number === 12 ? "passed_out" : "promoted", remarks: "", include: true }])),
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const set = (id: string, patch: any) => setRows({ ...rows, [id]: { ...rows[id], ...patch } });
+  const chosen = students.filter((s) => rows[s.student_id]?.include);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api("/directory/promotions", {
+        body: { fromClassId: c.id, toClassId: target || null, students: chosen.map((s) => ({ studentId: s.student_id, result: rows[s.student_id].result, remarks: rows[s.student_id].remarks })) },
+      });
+      setDone(`${r.students.length} student${r.students.length === 1 ? "" : "s"} recorded for ${r.year}. Their ${r.year} report is saved on each profile under “Year by year”.`);
+      onDone();
+    } catch (x) {
+      setErr((x as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal open onClose={onClose} title={`Promote ${c.name}`} wide>
+      {done ? (
+        <div className="space-y-4">
+          <SuccessNote message={done} />
+          <div className="flex justify-end">
+            <button className="btn" onClick={onClose}>
+              Done
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form className="space-y-4" onSubmit={submit}>
+          <p className="text-sm text-slate-500">
+            Each student's report for this year (attendance, marks, exams, homework) is saved first, then they move to the next class. If sections are reused every year, promote Class 12 first and work down, so each class is empty before
+            the class below moves in.
+          </p>
+          <Field label="Promote to" hint={next.length ? undefined : "No section of the next class yet — create it in Classes 1–12 first."}>
+            <select className="input" value={target} onChange={(e) => setToClassId(e.target.value)}>
+              <option value="">{c.grade_number === 12 ? "None (passing out)" : "Choose a class"}</option>
+              {[...next, ...options.filter((x) => !next.includes(x))].map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name}
+                  {next.includes(x) ? " (next class)" : ""}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="-mx-6 max-h-[45vh] overflow-y-auto border-y border-slate-100">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th className="pl-6" />
+                  <th>Student</th>
+                  <th>Result</th>
+                  <th className="pr-6">Remarks</th>
+                </tr>
+              </thead>
+              <tbody>
+                {students.map((s) => {
+                  const r = rows[s.student_id];
+                  return (
+                    <tr key={s.student_id} className={r.include ? "" : "opacity-50"}>
+                      <td className="pl-6">
+                        <input type="checkbox" className="h-4 w-4 accent-brand" checked={r.include} onChange={(e) => set(s.student_id, { include: e.target.checked })} aria-label={`Include ${s.name}`} />
+                      </td>
+                      <td>
+                        <p className="font-semibold text-slate-900">{s.name}</p>
+                        <p className="text-xs text-slate-500">
+                          Attendance {pct100(s.attendance_rate)} · Marks {pct100(s.percent)}
+                        </p>
+                      </td>
+                      <td>
+                        <select className="input py-1" value={r.result} onChange={(e) => set(s.student_id, { result: e.target.value })}>
+                          <option value="promoted">Promoted</option>
+                          <option value="detained">Detained (stays)</option>
+                          <option value="passed_out">Passed out</option>
+                          <option value="left">Left school</option>
+                        </select>
+                      </td>
+                      <td className="pr-6">
+                        <input className="input py-1" value={r.remarks} placeholder="Optional" onChange={(e) => set(s.student_id, { remarks: e.target.value })} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <ErrorNote message={err} />
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn" disabled={busy || !chosen.length}>
+              {busy ? "Saving…" : `Save results for ${chosen.length}`}
+            </button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
 function ClassReport({ items }: { items: any[] }) {
   if (!items.length) return <Empty title="No marks yet" icon="chart">Tests, projects and exam papers entered in the gradebook show up here.</Empty>;
   return (
@@ -1443,11 +1564,11 @@ function ExamReports({ exams, students }: { exams: any[]; students: any[] }) {
 export function DirectoryStudentPage() {
   const { id } = useParams();
   const d = useApi<any>(`/directory/students/${id}`);
-  const [tab, setTab] = useState<"overview" | "marks" | "exams" | "documents">("overview");
+  const [tab, setTab] = useState<"overview" | "years" | "marks" | "exams" | "office" | "documents">("overview");
   const [editing, setEditing] = useState(false);
   if (d.loading && !d.data) return <Spinner />;
   if (!d.data) return <ErrorNote message={d.error} />;
-  const { student: s, parents, classes, attendance, marks, overall, exams, assignments, activities, documents, permissions } = d.data;
+  const { student: s, parents, classes, attendance, marks, overall, exams, assignments, activities, documents, permissions, year, history, extras } = d.data;
   return (
     <div className="space-y-5">
       <BackLink />
@@ -1482,11 +1603,33 @@ export function DirectoryStudentPage() {
         onChange={setTab}
         options={[
           { value: "overview", label: "Profile" },
+          { value: "years", label: `Year by year (${history.length + 1})` },
           { value: "marks", label: "Class reports" },
           { value: "exams", label: `Exam reports (${exams.length})` },
+          ...(extras ? [{ value: "office" as const, label: "Fees, library & more" }] : []),
           { value: "documents", label: `Documents (${documents.length})` },
         ]}
       />
+      {tab === "years" && (
+        <div className="space-y-4">
+          <YearReport
+            title={`${year?.name ?? "Current year"} · ${classes.map((c: any) => c.name).join(", ") || "Not enrolled"}`}
+            badge={<Badge tone="brand">Current year · live</Badge>}
+            report={{ attendance, marks, overall, exams, assignments, activities }}
+          />
+          {history.map((h: any) => (
+            <YearReport
+              key={h.id}
+              title={`${h.year_name} · ${h.class_name}`}
+              badge={<Badge tone={h.result === "promoted" || h.result === "passed_out" ? "green" : h.result === "detained" ? "amber" : "slate"}>{RESULT_LABEL[h.result]}{h.promoted_to_class_name ? ` → ${h.promoted_to_class_name}` : ""}</Badge>}
+              note={`${h.remarks ? `“${h.remarks}” · ` : ""}Recorded ${fmtDate(h.created_at, { day: "numeric", month: "short", year: "numeric" })} by ${h.decided_by}`}
+              report={h.report}
+            />
+          ))}
+          {!history.length && <p className="text-sm text-slate-500">Earlier years appear here once the student is promoted. Each year's report is saved at promotion and stays unchanged.</p>}
+        </div>
+      )}
+      {tab === "office" && extras && <OfficeRecords x={extras} />}
       {tab === "overview" && (
         <div className="grid gap-5 lg:grid-cols-2">
           <SectionCard title="Personal details" icon="file">
@@ -1696,6 +1839,131 @@ const Detail = ({ label, children, wide }: { label: string; children: ReactNode;
   </div>
 );
 
+const RESULT_LABEL: Record<string, string> = { promoted: "Promoted", detained: "Detained", passed_out: "Passed out", left: "Left school" };
+
+function YearReport({ title, badge, note, report }: { title: string; badge: ReactNode; note?: string; report: any }) {
+  const { attendance, marks, overall, exams, assignments, activities } = report;
+  return (
+    <section className="card animate-fade-up">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
+          {note && <p className="text-xs text-slate-500">{note}</p>}
+        </div>
+        {badge}
+      </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <MiniStat label="Attendance" value={pct100(attendance.rate)} hint={`${attendance.attended ?? 0}/${attendance.counted ?? 0} days`} tone={toneForPercent(attendance.rate)} />
+        <MiniStat label="Overall" value={pct100(overall.percent)} hint={overall.grade ? `Grade ${overall.grade}` : "No marks"} tone={toneForPercent(overall.percent)} />
+        <MiniStat label="Homework" value={`${assignments.submitted}/${assignments.total}`} hint={assignments.averagePercent != null ? `Avg ${pct100(assignments.averagePercent)}` : "submitted"} tone="sky" />
+        <MiniStat label="Activities" value={String(activities.length)} hint={activities.map((a: any) => a.name).join(", ") || "None"} tone="amber" />
+      </div>
+      {(marks.some((m: any) => m.percent != null) || exams.length > 0) && (
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div>
+            <p className="label">Marks by class</p>
+            <ul className="space-y-2">
+              {marks.map((m: any) => (
+                <li key={m.classId}>
+                  <div className="flex justify-between text-sm">
+                    <span className="font-medium text-slate-800">{m.name}</span>
+                    <span className="text-slate-600">{m.percent == null ? "—" : `${pct100(m.percent)} · ${m.grade}`}</span>
+                  </div>
+                  <Progress value={m.percent ?? 0} tone={m.percent == null ? "brand" : m.percent >= 75 ? "green" : m.percent >= 50 ? "amber" : "red"} />
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <p className="label">Exams</p>
+            {!exams.length ? (
+              <p className="text-sm text-slate-500">No exams.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 text-sm">
+                {exams.map((e: any) => (
+                  <li key={e.id} className="flex items-center justify-between gap-2 py-2">
+                    <span>
+                      <span className="font-medium text-slate-800">{e.name}</span> <span className="text-xs text-slate-500">{e.term}</span>
+                    </span>
+                    {e.result ? (
+                      <span className="flex gap-1">
+                        <Badge tone={toneForPercent(e.result.percent)}>{pct100(e.result.percent)}</Badge>
+                        <Badge tone={RESULT_TONE[e.result.result]}>{e.result.result}</Badge>
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+const MiniStat = ({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone: Tone }) => (
+  <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
+    <p className="text-xs text-slate-500">{label}</p>
+    <p className={`text-xl font-bold ${tone === "red" ? "text-red-600" : tone === "green" ? "text-emerald-600" : tone === "amber" ? "text-amber-600" : "text-slate-900"}`}>{value}</p>
+    {hint && <p className="truncate text-[11px] text-slate-500">{hint}</p>}
+  </div>
+);
+
+function OfficeRecords({ x }: { x: any }) {
+  return (
+    <div className="grid gap-5 lg:grid-cols-2">
+      <SectionCard title="Fees" icon="card" action={<Link className="text-xs font-semibold text-brand" to="/fees">Open fees</Link>}>
+        <div className="grid grid-cols-3 gap-3">
+          <MiniStat label="Billed" value={inr(x.fees.billed)} tone="slate" />
+          <MiniStat label="Paid" value={inr(x.fees.paid)} tone="green" />
+          <MiniStat label="Due" value={inr(x.fees.due)} hint={x.fees.overdue ? `${x.fees.overdue} overdue` : "Nothing overdue"} tone={x.fees.overdue ? "red" : "slate"} />
+        </div>
+      </SectionCard>
+      <SectionCard title="Library books with the student" icon="book">
+        {!x.library.length ? (
+          <p className="text-sm text-slate-500">No books issued.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 text-sm">
+            {x.library.map((l: any, i: number) => (
+              <li key={i} className="flex justify-between py-2">
+                <span className="font-medium text-slate-800">{l.title}</span>
+                <Badge tone={l.overdue ? "red" : "slate"}>due {fmtDate(l.due_date)}</Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+      </SectionCard>
+      <SectionCard title="Transport and hostel" icon="bus">
+        <dl className="grid grid-cols-2 gap-3 text-sm">
+          <Detail label="Bus route">{x.transport && `${x.transport.route} · ${x.transport.stop}`}</Detail>
+          <Detail label="Hostel">{x.hostel && `${x.hostel.hostel} · Room ${x.hostel.room_no}`}</Detail>
+        </dl>
+      </SectionCard>
+      <SectionCard title="Leave and out-passes" icon="calendar">
+        {!x.leave.length ? (
+          <p className="text-sm text-slate-500">No leave requests.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 text-sm">
+            {x.leave.map((l: any, i: number) => (
+              <li key={i} className="flex items-center justify-between gap-2 py-2">
+                <span>
+                  {fmtDate(l.start_date)}
+                  {l.end_date !== l.start_date && ` – ${fmtDate(l.end_date)}`} · <span className="text-slate-500">{l.kind === "outpass" ? "Out-pass" : l.leave_type}</span>
+                  <span className="block text-xs text-slate-500">{l.reason}</span>
+                </span>
+                <Badge tone={l.status === "approved" ? "green" : l.status === "rejected" ? "red" : "amber"}>{l.status}</Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+      </SectionCard>
+    </div>
+  );
+}
+
 function EditStudent({ s, onClose, onSaved }: { s: any; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState({
     admissionNo: s.admission_no ?? "",
@@ -1751,10 +2019,14 @@ export function DirectoryStaffPage() {
   const { userId } = useParams();
   const { can } = useAuth();
   const d = useApi<any>(`/directory/staff/${userId}`);
+  const [tab, setTab] = useState<"profile" | "teaching" | "attendance" | "documents">("profile");
+  const [editing, setEditing] = useState(false);
   if (d.loading && !d.data) return <Spinner />;
   if (!d.data) return <ErrorNote message={d.error} />;
-  const { staff: s, timetable, documents } = d.data;
+  const { staff: s, timetable, documents, attendance, leave, payslips, year } = d.data;
   const admin = can("directory.manage");
+  const long = { day: "numeric", month: "short", year: "numeric" } as const;
+  const missing = ["phone", "qualification", "date_joined", "date_of_birth", "address", "emergency_contact_phone"].filter((k) => !s[k]).length;
   return (
     <div className="space-y-5">
       <BackLink />
@@ -1762,94 +2034,287 @@ export function DirectoryStaffPage() {
         <Avatar name={s.name} size={64} />
         <div className="min-w-0 flex-1">
           <h1 className="font-display text-2xl font-semibold text-slate-900">{s.name}</h1>
-          <p className="text-sm text-slate-500">
-            {[s.designation, s.department, s.roles.map((r: string) => ROLE[r] ?? r).join(", ")].filter(Boolean).join(" · ")}
-          </p>
+          <p className="text-sm text-slate-500">{[s.designation, s.department, s.roles.map((r: string) => ROLE[r] ?? r).join(", ")].filter(Boolean).join(" · ")}</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Badge tone={s.status === "active" ? "green" : s.status === "left" ? "red" : "amber"}>{s.status.replace("_", " ")}</Badge>
+            {s.employee_code && <Badge tone="slate">{s.employee_code}</Badge>}
+            {s.experience_years != null && <Badge tone="sky">{s.experience_years} yrs experience</Badge>}
+          </div>
         </div>
-        <Badge tone={s.status === "active" ? "green" : s.status === "left" ? "red" : "amber"}>{s.status.replace("_", " ")}</Badge>
+        {admin && (
+          <button className="btn" onClick={() => setEditing(true)}>
+            <Icon name="sliders" size={16} /> Edit details
+          </button>
+        )}
       </div>
-      <div className="grid gap-5 lg:grid-cols-2">
-        <SectionCard title="Details" icon="file" action={can("payroll.manage") && <Link className="text-xs font-semibold text-brand" to="/staff">Edit in Staff & payroll</Link>}>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-            <Detail label="Email">{s.email}</Detail>
-            <Detail label="Phone">{s.phone}</Detail>
-            <Detail label="Employee code">{s.employee_code}</Detail>
-            <Detail label="Joined">{s.date_joined && fmtDate(s.date_joined, { day: "numeric", month: "short", year: "numeric" })}</Detail>
-            <Detail label="Blood group">{s.blood_group}</Detail>
-          </dl>
-        </SectionCard>
-        <SectionCard title="Classes and subjects" icon="book">
-          {!s.subjects.length && !s.class_teacher_of.length ? (
-            <p className="text-sm text-slate-500">Not assigned to any class or subject.</p>
-          ) : (
-            <div className="space-y-3">
-              {s.class_teacher_of.length > 0 && (
-                <div>
-                  <span className="label">Class teacher of</span>
-                  <div className="flex flex-wrap gap-1">
-                    {s.class_teacher_of.map((c: any) => (
-                      <Link key={c.id} to={`/directory/classes/${c.id}`}>
-                        <Badge tone="brand">{c.name}</Badge>
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {s.subjects.length > 0 && (
-                <div>
-                  <span className="label">Teaches</span>
-                  <div className="flex flex-wrap gap-1">
-                    {s.subjects.map((x: any) => (
-                      <Link key={x.id} to={`/directory/classes/${x.classId}`}>
-                        <Badge tone="sky">
-                          {x.className} · {x.subject}
-                        </Badge>
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </SectionCard>
-        <SectionCard title="Sports and activities in charge" icon="trophy">
-          {!s.activities.length ? (
-            <p className="text-sm text-slate-500">None.</p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {s.activities.map((a: any) => (
-                <Link key={a.id} to={`/directory/activities/${a.id}`}>
-                  <Badge tone={category(a.category).tone}>{a.name}</Badge>
-                </Link>
-              ))}
-            </div>
-          )}
-        </SectionCard>
-        <SectionCard title="Weekly timetable" icon="clock">
-          {!timetable.length ? (
-            <p className="text-sm text-slate-500">No periods in the timetable.</p>
-          ) : (
-            <ul className="divide-y divide-slate-100 text-sm">
-              {timetable.map((t: any, i: number) => (
-                <li key={i} className="flex justify-between py-1.5">
-                  <span>
-                    <span className="inline-block w-10 font-semibold text-slate-700">{DAYS[t.day_of_week - 1]}</span>
-                    {t.start_time.slice(0, 5)}–{t.end_time.slice(0, 5)}
-                  </span>
-                  <span className="text-slate-600">
-                    {t.class_name} · {t.subject}
-                    {t.room && ` · ${t.room}`}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </SectionCard>
+      {admin && missing > 0 && (
+        <p className="rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
+          {missing} detail{missing > 1 ? "s are" : " is"} missing from this record.{" "}
+          <button className="font-semibold underline" onClick={() => setEditing(true)}>
+            Fill them in
+          </button>
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatCard label="Subjects taught" value={s.subjects.length} icon="book" hint={[...new Set(s.subjects.map((x: any) => x.subject))].join(", ") || "None"} />
+        <StatCard label="Class teacher of" value={s.class_teacher_of.length} icon="star" tone="sky" hint={s.class_teacher_of.map((c: any) => c.name).join(", ") || "—"} />
+        <StatCard label={`Present${year ? ` (${year})` : ""}`} value={attendance.present} icon="checkSquare" tone="green" hint={`${attendance.absent} absent · ${attendance.on_leave} on leave`} />
+        <StatCard label="Documents" value={documents.length} icon="folder" tone="amber" />
       </div>
-      <SectionCard title="Documents" icon="folder">
-        <DocumentsPanel ownerType="staff" ownerId={s.user_id} documents={documents} canUpload={admin} admin={admin} onChange={d.reload} bare />
-      </SectionCard>
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: "profile", label: "Profile" },
+          { value: "teaching", label: "Teaching" },
+          { value: "attendance", label: "Attendance & leave" },
+          { value: "documents", label: `Documents (${documents.length})` },
+        ]}
+      />
+      {tab === "profile" && (
+        <div className="grid gap-5 lg:grid-cols-2">
+          <SectionCard title="Personal" icon="users">
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+              <Detail label="Email">{s.email}</Detail>
+              <Detail label="Phone">{s.phone}</Detail>
+              <Detail label="Date of birth">{s.date_of_birth && fmtDate(s.date_of_birth, long)}</Detail>
+              <Detail label="Gender">{s.gender && s.gender[0].toUpperCase() + s.gender.slice(1)}</Detail>
+              <Detail label="Blood group">{s.blood_group}</Detail>
+              <Detail label="Address" wide>
+                {s.address}
+              </Detail>
+            </dl>
+          </SectionCard>
+          <SectionCard title="Professional" icon="graduation">
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+              <Detail label="Employee code">{s.employee_code}</Detail>
+              <Detail label="Joined">{s.date_joined && fmtDate(s.date_joined, long)}</Detail>
+              <Detail label="Designation">{s.designation}</Detail>
+              <Detail label="Department">{s.department}</Detail>
+              <Detail label="Qualification">{s.qualification}</Detail>
+              <Detail label="Specialisation">{s.specialization}</Detail>
+              <Detail label="Experience">{s.experience_years != null && `${s.experience_years} years`}</Detail>
+              <Detail label="Previous school">{s.previous_school}</Detail>
+            </dl>
+          </SectionCard>
+          <SectionCard title="Emergency contact" icon="phone">
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+              <Detail label="Name">{s.emergency_contact_name}</Detail>
+              <Detail label="Phone">{s.emergency_contact_phone}</Detail>
+            </dl>
+          </SectionCard>
+          <SectionCard title="Pay" icon="card" action={can("payroll.manage") && <Link className="text-xs font-semibold text-brand" to="/staff">Salary in Staff & payroll</Link>}>
+            {!payslips.length ? (
+              <p className="text-sm text-slate-500">No payslips yet.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 text-sm">
+                {payslips.slice(0, 4).map((p: any) => (
+                  <li key={p.month} className="flex justify-between py-1.5">
+                    <span>{new Date(`${p.month}-01T00:00:00`).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</span>
+                    <span className="font-semibold">
+                      {inr(p.net_paise)} <Badge tone={p.status === "paid" ? "green" : "amber"}>{p.status}</Badge>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
+        </div>
+      )}
+      {tab === "teaching" && (
+        <div className="grid gap-5 lg:grid-cols-2">
+          <SectionCard title="Classes and subjects" icon="book">
+            {!s.subjects.length && !s.class_teacher_of.length ? (
+              <p className="text-sm text-slate-500">Not assigned to any class or subject.</p>
+            ) : (
+              <div className="space-y-3">
+                {s.class_teacher_of.length > 0 && (
+                  <div>
+                    <span className="label">Class teacher of</span>
+                    <div className="flex flex-wrap gap-1">
+                      {s.class_teacher_of.map((c: any) => (
+                        <Link key={c.id} to={`/directory/classes/${c.id}`}>
+                          <Badge tone="brand">{c.name}</Badge>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {s.subjects.length > 0 && (
+                  <div>
+                    <span className="label">Teaches</span>
+                    <div className="flex flex-wrap gap-1">
+                      {s.subjects.map((x: any) => (
+                        <Link key={x.id} to={`/directory/classes/${x.classId}`}>
+                          <Badge tone="sky">
+                            {x.className} · {x.subject}
+                          </Badge>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </SectionCard>
+          <SectionCard title="Sports and activities in charge" icon="trophy">
+            {!s.activities.length ? (
+              <p className="text-sm text-slate-500">None.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {s.activities.map((a: any) => (
+                  <Link key={a.id} to={`/directory/activities/${a.id}`}>
+                    <Badge tone={category(a.category).tone}>{a.name}</Badge>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </SectionCard>
+          <SectionCard title="Weekly timetable" icon="clock" className="lg:col-span-2">
+            {!timetable.length ? (
+              <p className="text-sm text-slate-500">No periods in the timetable.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 text-sm">
+                {timetable.map((t: any, i: number) => (
+                  <li key={i} className="flex justify-between py-1.5">
+                    <span>
+                      <span className="inline-block w-10 font-semibold text-slate-700">{DAYS[t.day_of_week - 1]}</span>
+                      {t.start_time.slice(0, 5)}–{t.end_time.slice(0, 5)}
+                    </span>
+                    <span className="text-slate-600">
+                      {t.class_name} · {t.subject}
+                      {t.room && ` · ${t.room}`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
+        </div>
+      )}
+      {tab === "attendance" && (
+        <div className="grid gap-5 lg:grid-cols-2">
+          <SectionCard title={`Attendance${year ? ` · ${year}` : ""}`} icon="checkSquare">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <MiniStat label="Present" value={String(attendance.present)} hint={`${attendance.present_this_month} this month`} tone="green" />
+              <MiniStat label="Absent" value={String(attendance.absent)} tone={attendance.absent ? "red" : "slate"} />
+              <MiniStat label="Half days" value={String(attendance.half_day)} tone="amber" />
+              <MiniStat label="On leave" value={String(attendance.on_leave)} tone="sky" />
+            </div>
+          </SectionCard>
+          <SectionCard title="Leave requests" icon="calendar">
+            {!leave.length ? (
+              <p className="text-sm text-slate-500">No leave requests.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 text-sm">
+                {leave.map((l: any, i: number) => (
+                  <li key={i} className="flex items-center justify-between gap-2 py-2">
+                    <span>
+                      {fmtDate(l.start_date)}
+                      {l.end_date !== l.start_date && ` – ${fmtDate(l.end_date)}`} · <span className="capitalize text-slate-500">{l.leave_type}</span>
+                      <span className="block text-xs text-slate-500">{l.reason}</span>
+                    </span>
+                    <Badge tone={l.status === "approved" ? "green" : l.status === "rejected" ? "red" : "amber"}>{l.status}</Badge>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
+        </div>
+      )}
+      {tab === "documents" && <DocumentsPanel ownerType="staff" ownerId={s.user_id} documents={documents} canUpload={admin} admin={admin} onChange={d.reload} />}
+      {editing && <EditStaff s={s} onClose={() => setEditing(false)} onSaved={d.reload} />}
     </div>
+  );
+}
+
+function EditStaff({ s, onClose, onSaved }: { s: any; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState({
+    employeeCode: s.employee_code ?? "",
+    designation: s.designation ?? "",
+    department: s.department ?? "",
+    dateJoined: s.date_joined ?? "",
+    phone: s.phone ?? "",
+    bloodGroup: s.blood_group ?? "",
+    dateOfBirth: s.date_of_birth ?? "",
+    gender: s.gender ?? "",
+    address: s.address ?? "",
+    qualification: s.qualification ?? "",
+    specialization: s.specialization ?? "",
+    experienceYears: s.experience_years ?? "",
+    previousSchool: s.previous_school ?? "",
+    emergencyContactName: s.emergency_contact_name ?? "",
+    emergencyContactPhone: s.emergency_contact_phone ?? "",
+  });
+  const [err, setErr] = useState<string | null>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await api(`/directory/staff/${s.user_id}`, {
+        method: "PATCH",
+        body: {
+          ...f,
+          employeeCode: f.employeeCode || undefined,
+          dateJoined: f.dateJoined || null,
+          dateOfBirth: f.dateOfBirth || null,
+          gender: f.gender || null,
+          experienceYears: f.experienceYears === "" ? null : Number(f.experienceYears),
+        },
+      });
+      onSaved();
+      onClose();
+    } catch (x) {
+      setErr((x as Error).message);
+    }
+  };
+  const input = (k: keyof typeof f, label: string, type = "text") => (
+    <Field label={label}>
+      <input className="input" type={type} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} />
+    </Field>
+  );
+  return (
+    <Modal open onClose={onClose} title={`Edit ${s.name}`} wide>
+      <form className="space-y-4" onSubmit={submit}>
+        <p className="label">Professional</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {input("employeeCode", "Employee code")}
+          {input("designation", "Designation")}
+          {input("department", "Department")}
+          {input("qualification", "Qualification")}
+          {input("specialization", "Specialisation")}
+          {input("experienceYears", "Experience (years)", "number")}
+          {input("dateJoined", "Date joined", "date")}
+          {input("previousSchool", "Previous school")}
+        </div>
+        <p className="label">Personal</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {input("phone", "Phone", "tel")}
+          {input("dateOfBirth", "Date of birth", "date")}
+          <Field label="Gender">
+            <select className="input" value={f.gender} onChange={(e) => setF({ ...f, gender: e.target.value })}>
+              <option value="">—</option>
+              <option value="female">Female</option>
+              <option value="male">Male</option>
+              <option value="other">Other</option>
+            </select>
+          </Field>
+          {input("bloodGroup", "Blood group")}
+          {input("emergencyContactName", "Emergency contact")}
+          {input("emergencyContactPhone", "Emergency phone", "tel")}
+        </div>
+        <Field label="Address">
+          <textarea className="input" rows={2} value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
+        </Field>
+        <p className="text-xs text-slate-500">Salary and bank details are kept in Staff & payroll.</p>
+        <ErrorNote message={err} />
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn">Save</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

@@ -85,6 +85,57 @@ curriculumRouter.get(
   }),
 );
 
+/**
+ * The whole course in one call for the Courses page: subjects, their chapters,
+ * topics and published lessons, with the student's lesson progress and latest
+ * mastery when the caller is (or looks after) a student.
+ */
+curriculumRouter.get(
+  "/overview",
+  asyncHandler(async (req, res) => {
+    const q = parse(z.object({ curriculumVersionId: z.string().uuid().optional() }), req.query);
+    const tenant = requireTenant(req);
+    const data = await withTenant(tenant.id, async (db) => {
+      const student = tenant.studentProfileId ? await resolveStudent(req, db).catch(() => null) : null;
+      const versions = (
+        await db.query(
+          `SELECT cv.id, b.name AS board, g.name AS grade, cv.academic_year FROM curriculum_versions cv
+             JOIN boards b ON b.id = cv.board_id JOIN grades g ON g.id = cv.grade_id WHERE cv.approval_status = 'approved' ORDER BY g.sequence, b.name`,
+        )
+      ).rows;
+      const cv = q.curriculumVersionId ?? student?.curriculumVersionId ?? versions[0]?.id ?? null;
+      const rows = (
+        await db.query(
+          `SELECT s.id AS subject_id, s.name AS subject, c.id AS chapter_id, c.title AS chapter, c.sequence AS chapter_seq,
+                  t.id AS topic_id, t.title AS topic, t.sequence AS topic_seq, t.difficulty, t.estimated_minutes,
+                  (SELECT json_agg(json_build_object('id', l.id, 'title', l.title, 'status', lp.status) ORDER BY l.created_at)
+                     FROM lessons l LEFT JOIN lesson_progress lp ON lp.lesson_id = l.id AND lp.student_id = $2
+                    WHERE l.topic_id = t.id AND l.status = 'published') AS lessons,
+                  (SELECT m.score FROM topic_mastery_history m WHERE m.topic_id = t.id AND m.student_id = $2 ORDER BY m.created_at DESC LIMIT 1) AS mastery
+             FROM chapters c JOIN subjects s ON s.id = c.subject_id LEFT JOIN topics t ON t.chapter_id = c.id
+            WHERE ($1::uuid IS NULL OR c.curriculum_version_id = $1)
+            ORDER BY s.name, c.sequence, t.sequence`,
+          [cv, student?.id ?? null],
+        )
+      ).rows;
+      const subjects: any[] = [];
+      for (const r of rows) {
+        let sub = subjects.find((x) => x.id === r.subject_id);
+        if (!sub) subjects.push((sub = { id: r.subject_id, name: r.subject, chapters: [] }));
+        let ch = sub.chapters.find((x: any) => x.id === r.chapter_id);
+        if (!ch) sub.chapters.push((ch = { id: r.chapter_id, title: r.chapter, sequence: r.chapter_seq, topics: [] }));
+        if (r.topic_id)
+          ch.topics.push({
+            id: r.topic_id, title: r.topic, sequence: r.topic_seq, difficulty: r.difficulty, estimatedMinutes: r.estimated_minutes,
+            lessons: r.lessons ?? [], mastery: r.mastery == null ? null : Number(r.mastery),
+          });
+      }
+      return { versions, curriculumVersionId: cv, tracksProgress: !!student, subjects };
+    });
+    res.json(data);
+  }),
+);
+
 export const coursesRouter = Router();
 
 coursesRouter.get(
