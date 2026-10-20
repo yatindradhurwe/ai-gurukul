@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { Icon, type IconName } from "../components/icons";
-import { Avatar, Badge, Empty, ErrorNote, Progress, SectionCard, Spinner, StatCard, fmtDate, fmtDateTime, inr, pct100, toneForPercent } from "../components/ui";
+import { Avatar, Badge, Donut, Empty, ErrorNote, Progress, SectionCard, Spinner, StatCard, fmtDate, fmtDateTime, inr, pct100, toneForPercent } from "../components/ui";
 import { BadgeShelf, CelebrationToast, GoalsCard, Leaderboard, LevelCard, useCelebrations, type Engagement } from "../components/Rewards";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/useApi";
@@ -77,6 +77,7 @@ export function DashboardPage() {
   const isStudent = !!info?.studentProfileId;
   const reward = useApi<Engagement>(isStudent ? "/engagement/me" : null);
   const { news: toast, dismiss } = useCelebrations(reward.data);
+  const feeSummary = useApi<any>(dash.data?.fees ? "/fees/summary" : null).data?.totals;
   const news = useApi<any>("/announcements");
 
   if (dash.loading && !dash.data) return <Spinner />;
@@ -89,6 +90,7 @@ export function DashboardPage() {
   const library = d.library;
   const transport = d.transport;
   const hostel = d.hostel;
+  const attention = d.attention;
   const latest = (news.data?.announcements ?? []).slice(0, 4);
 
   const actions: { to: string; icon: IconName; label: string }[] = [];
@@ -131,6 +133,32 @@ export function DashboardPage() {
       </section>
       <ErrorNote message={dash.error} />
 
+      {attention && (
+        <div className="flex flex-wrap items-center gap-2 rounded-[1.6rem] bg-white p-3 shadow-soft ring-1 ring-slate-200/70 animate-fade-up">
+          <span className="flex items-center gap-2 px-2 text-sm font-semibold text-slate-900">
+            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-rose-100 text-rose-600 animate-wiggle">
+              <Icon name="bell" size={16} />
+            </span>
+            Needs your attention
+          </span>
+          {attention.leaveToReview > 0 && (
+            <Link to="/leave" className="chip bg-amber-100 px-3 py-1.5 text-sm text-amber-800 hover:bg-amber-200">
+              {attention.leaveToReview} leave request(s) to review
+            </Link>
+          )}
+          {attention.newEnquiries > 0 && (
+            <Link to="/admissions" className="chip bg-sky-100 px-3 py-1.5 text-sm text-sky-800 hover:bg-sky-200">
+              {attention.newEnquiries} new admission enquir{attention.newEnquiries === 1 ? "y" : "ies"}
+            </Link>
+          )}
+          {attention.meetingsToday > 0 && (
+            <Link to="/meetings" className="chip bg-emerald-100 px-3 py-1.5 text-sm text-emerald-800 hover:bg-emerald-200">
+              {attention.meetingsToday} parent meeting(s) today
+            </Link>
+          )}
+        </div>
+      )}
+
       {/* Organization overview */}
       {org && (
         <>
@@ -171,6 +199,21 @@ export function DashboardPage() {
             <>
               <StatCard label="Hostel beds used" value={`${hostel.occupied}/${hostel.beds}`} icon="home" tone="green" hint={`${hostel.beds - hostel.occupied} free in ${hostel.hostels} hostel(s)`} />
             </>
+          )}
+        </div>
+      )}
+
+      {(feeSummary || hostel) && (
+        <div className="grid gap-4 md:grid-cols-2">
+          {feeSummary && (
+            <SectionCard title="Fee collection" icon="card" action={<Link to="/fees" className="text-xs font-semibold text-brand">Fees →</Link>}>
+              <Donut value={Number(feeSummary.collected)} total={Number(feeSummary.billed)} label="of billed fees collected" sub={`${inr(feeSummary.collected)} of ${inr(feeSummary.billed)}`} color="#10b981" />
+            </SectionCard>
+          )}
+          {hostel && hostel.beds > 0 && (
+            <SectionCard title="Hostel occupancy" icon="home" action={<Link to="/hostel" className="text-xs font-semibold text-brand">Hostel →</Link>}>
+              <Donut value={hostel.occupied} total={hostel.beds} label="of beds occupied" sub={`${hostel.occupied} of ${hostel.beds} beds`} color="#f59e0b" />
+            </SectionCard>
           )}
         </div>
       )}

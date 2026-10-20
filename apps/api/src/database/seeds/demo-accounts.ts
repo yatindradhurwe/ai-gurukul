@@ -104,7 +104,7 @@ async function seedSchoolRecords(db: Db, c: { tenantId: string; classId: string;
     [t, hw[1].id, s1, ids.teacher],
   );
 
-  // Five school days of attendance, ending yesterday (today is left for the teacher to mark).
+  // The five school days (Monday–Saturday) before today; today is left for the teacher to mark.
   const pattern = [
     ["present", "present"],
     ["present", "late"],
@@ -116,8 +116,9 @@ async function seedSchoolRecords(db: Db, c: { tenantId: string; classId: string;
     for (const [sid, status] of [[s1, pattern[i][0]], [s2, pattern[i][1]]]) {
       await db.query(
         `INSERT INTO attendance_records (tenant_id, class_id, student_id, date, status, marked_by)
-         VALUES ($1,$2,$3,(now() AT TIME ZONE 'Asia/Kolkata')::date - $4::int,$5,$6) ON CONFLICT DO NOTHING`,
-        [t, cls, sid, i + 1, status, ids.teacher],
+         VALUES ($1,$2,$3,(SELECT d::date FROM generate_series((now() AT TIME ZONE 'Asia/Kolkata')::date - 1, (now() AT TIME ZONE 'Asia/Kolkata')::date - 14, interval '-1 day') d
+                           WHERE extract(isodow FROM d) < 7 OFFSET $4 LIMIT 1),$5,$6) ON CONFLICT DO NOTHING`,
+        [t, cls, sid, i, status, ids.teacher],
       );
     }
   }
@@ -315,6 +316,82 @@ async function seedTransportAndHostel(db: Db, c: { tenantId: string; ids: Record
   }
 }
 
+/** HR profiles, calendar events, a conversation, PTM slots, a leave request and admission enquiries. Added once. */
+async function seedOfficeRecords(db: Db, c: { tenantId: string; ids: Record<string, string>; s1: string }) {
+  const done = await db.query(`SELECT 1 FROM school_events WHERE tenant_id = $1 LIMIT 1`, [c.tenantId]);
+  if (done.rowCount) return;
+  const { tenantId: t, ids, s1 } = c;
+  const today = `(now() AT TIME ZONE 'Asia/Kolkata')::date`;
+
+  const staff: [string, string, string, string, number, number][] = [
+    ["principal", "EMP-001", "Principal", "Administration", 90000, 36000],
+    ["admin", "EMP-002", "Administrative officer", "Administration", 45000, 18000],
+    ["teacher", "EMP-003", "TGT Science", "Science", 38000, 15200],
+    ["staff", "EMP-004", "HR executive", "Office", 30000, 12000],
+    ["accountant", "EMP-005", "Accountant", "Accounts", 32000, 12800],
+    ["librarian", "EMP-006", "Librarian", "Library", 26000, 10400],
+    ["transport", "EMP-007", "Transport in-charge", "Transport", 24000, 9600],
+    ["warden", "EMP-008", "Hostel warden", "Hostel", 25000, 10000],
+  ];
+  for (const [key, code, designation, dept, basic, hra] of staff) {
+    await db.query(
+      `INSERT INTO staff_profiles (tenant_id, user_id, employee_code, designation, department, date_joined, phone, basic_paise, hra_paise, da_paise, other_paise, tds_paise, bank_account_last4)
+       VALUES ($1,$2,$3,$4,$5,'2022-06-01','98450' || substr($3, 5, 3) || '000',$6,$7,$8,150000,$9,lpad(substr($3, 5, 3), 4, '1'))
+       ON CONFLICT (tenant_id, user_id) DO NOTHING`,
+      [t, ids[key], code, designation, dept, basic * 100, hra * 100, Math.round(basic * 0.1) * 100, basic >= 45000 ? 250000 : 0],
+    );
+  }
+
+  const events: [string, string, number, number, string][] = [
+    ["Gandhi Jayanti", "holiday", -18, -18, "all"],
+    ["Annual sports day", "sports", 12, 12, "all"],
+    ["Parent-teacher meeting", "meeting", 4, 4, "parents"],
+    ["Inter-house quiz", "cultural", 20, 20, "students"],
+    ["Diwali break", "holiday", 15, 17, "all"],
+    ["Staff development workshop", "meeting", 9, 9, "staff"],
+  ];
+  for (const [title, kind, a, b, audience] of events) {
+    await db.query(`INSERT INTO school_events (tenant_id, title, kind, start_date, end_date, audience, created_by) VALUES ($1,$2,$3,${today} + $4::int,${today} + $5::int,$6,$7)`, [t, title, kind, a, b, audience, ids.principal]);
+  }
+
+  const conv = (await db.query(`INSERT INTO conversations (tenant_id, subject, student_id, created_by, last_message_at) VALUES ($1,'Science project',$2,$3, now() - interval '2 hours') RETURNING id`, [t, s1, ids.parent])).rows[0].id;
+  await db.query(`INSERT INTO conversation_members (tenant_id, conversation_id, user_id, last_read_at) VALUES ($1,$2,$3, now()), ($1,$2,$4, now() - interval '1 day')`, [t, conv, ids.parent, ids.teacher]);
+  for (const [who, body, ago] of [
+    ["parent", "Namaste Ma'am, Ravi says the water-cycle model is due next week. Can he use clay?", "5 hours"],
+    ["teacher", "Namaste! Yes, clay or thermocol are both fine. Please make sure he labels each stage.", "4 hours"],
+    ["parent", "Thank you, we'll get started this weekend.", "2 hours"],
+  ] as const) {
+    await db.query(`INSERT INTO messages (tenant_id, conversation_id, sender_id, body, created_at) VALUES ($1,$2,$3,$4, now() - $5::interval)`, [t, conv, ids[who], body, ago]);
+  }
+
+  await db.query(
+    `INSERT INTO ptm_slots (tenant_id, teacher_id, starts_at, duration_minutes, location)
+     SELECT $1, $2, g, 15, 'Room 8A' FROM generate_series(((${today} + 4) + time '15:30') AT TIME ZONE 'Asia/Kolkata',
+                                                          ((${today} + 4) + time '16:45') AT TIME ZONE 'Asia/Kolkata', interval '15 minutes') g`,
+    [t, ids.teacher],
+  );
+
+  await db.query(
+    `INSERT INTO leave_requests (tenant_id, kind, requester_id, student_id, start_date, end_date, reason) VALUES ($1,'student',$2,$3,${today} + 6,${today} + 7,'Cousin''s wedding in Mysuru')`,
+    [t, ids.parent, s1],
+  );
+
+  const apps: [string, string, string, string, string, string][] = [
+    ["Ishaan Mehta", "Class 6", "Priya Mehta", "priya.mehta@example.com", "9876501234", "enquiry"],
+    ["Diya Reddy", "Class 8", "Srinivas Reddy", "srinivas.reddy@example.com", "9876502345", "interview"],
+    ["Aarav Nair", "Class 3", "Lakshmi Nair", "lakshmi.nair@example.com", "9876503456", "applied"],
+  ];
+  for (const [student, grade, parentName, email, phone, status] of apps) {
+    await db.query(
+      `INSERT INTO admission_applications (tenant_id, student_name, grade_applying, parent_name, parent_email, parent_phone, status, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [t, student, grade, parentName, email, phone, status, status === "enquiry" ? "website" : "office"],
+    );
+  }
+  await db.query(`UPDATE student_profiles SET admission_no = 'ADM-2025-0' || CASE WHEN id = $2 THEN '101' ELSE '102' END, blood_group = CASE WHEN id = $2 THEN 'B+' ELSE 'O+' END,
+                    guardian_name = CASE WHEN id = $2 THEN 'Sunita Kumar' ELSE NULL END, guardian_phone = '9845011111', admitted_on = '2025-04-01'
+                   WHERE tenant_id = $1 AND admission_no IS NULL`, [t, s1]);
+}
+
 export async function setupDemo(opts: { reset?: boolean; password?: string; superadminPassword?: string } = {}) {
   await seed(() => {});
   const db = await pool.connect();
@@ -377,6 +454,7 @@ export async function setupDemo(opts: { reset?: boolean; password?: string; supe
     await seedSchoolRecords(db, { tenantId: tenant.id, classId: cls.id, ids, s1, s2 });
     await seedCampusRecords(db, { tenantId: tenant.id, classId: cls.id, ids, s1, s2 });
     await seedTransportAndHostel(db, { tenantId: tenant.id, ids, s1, s2 });
+    await seedOfficeRecords(db, { tenantId: tenant.id, ids, s1 });
     await db.query("COMMIT");
   } catch (err) {
     await db.query("ROLLBACK");

@@ -240,6 +240,32 @@ Transport is managed by owners, admins, staff/HR and transport managers (`transp
 
 XP comes from what students already do: lesson 20, quiz 15 + up to 15 for the score, assignment 25, study task 10, attendance 10, live class 15, library return 15, AI-teacher question or class doubt 5 (at most 10 a day). Level *n* needs 50·(n−1)² XP.
 
+## Messaging, leave, admissions and HR
+
+| Method | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/messages/contacts` | member | Staff may message anyone; students and parents only their (children's) teachers and, for parents, the office |
+| GET / POST | `/messages/conversations` | member | Inbox with unread counts / `{recipientId, subject?, body, studentId?}` (reuses the existing thread) |
+| GET / POST | `/messages/conversations/:id` | participant | Thread (marks it read) / reply `{body}` |
+| POST | `/ptm/slots` | classes.manage | `{date, startTime, endTime, minutes, location}` publishes a block of slots |
+| GET / DELETE | `/ptm/slots/mine`, `/ptm/slots/:id` | classes.manage | The teacher's slots and bookings |
+| GET | `/ptm/available` | reports.children | Free slots with the child's teachers, and the parent's bookings |
+| POST | `/ptm/slots/:id/book`, `/ptm/slots/:id/cancel` | parent / teacher | `{studentId, note?}`; one booking per teacher per child |
+| POST | `/leave` | member | `{kind: student\|staff\|outpass, studentId?, leaveType, startDate, endDate, outTime?, returnTime?, reason}` |
+| GET | `/leave/mine`, `/leave/review?status`, `/leave/balance?userId` | member | Reviewers: class teacher or admin (student), leave.approve (staff), hostel.manage (out-pass) |
+| POST | `/leave/:id/review`, `/leave/:id/cancel` | reviewer / requester | Approved student leave marks absences excused; approved staff leave goes into staff attendance |
+| GET / POST / DELETE | `/events` | member / announcements.manage | `?from&to`; returns events for the caller's audience plus published exam papers |
+| GET / POST | `/public/admissions/:slug` | none | The school's public admission form (rate limited) |
+| GET / POST / PATCH | `/admissions[/:id]` | admissions.manage | Pipeline: enquiry → applied → interview → offered → admitted / rejected |
+| POST | `/admissions/:id/admit` | admissions.manage | `{studentEmail, password, classId?, bloodGroup?, createParent?, parentPassword?}` creates the student (and parent) and an admission number |
+| PATCH | `/admissions/students/:studentId` | admissions.manage | Admission number, date of birth, blood group, guardian, address |
+| GET | `/id-cards?type&classId`, `/id-cards/me`, `/id-cards/certificates/:studentId?type&purpose` | admissions.manage / self | ID cards and bonafide/character certificates |
+| GET / PUT | `/hr/staff[/:userId]` | payroll.manage | Staff with HR profile and salary structure (rupees in, paise out) |
+| GET / POST | `/hr/attendance` | payroll.manage | Staff attendance: present, absent, half day, leave |
+| POST | `/hr/payroll/generate` | payroll.manage | `{month}`; working days are Mon–Sat minus holidays; absences, half days and unpaid leave are deducted; paid payslips are never recalculated |
+| GET | `/hr/payroll?month`, `/hr/payslips/mine`, `/hr/payslips/:id` | payroll.manage / self (paid only) | |
+| POST | `/hr/payslips/:id/pay` | payroll.manage | |
+
 ## Parents
 
 | Method | Path | Permission | Notes |

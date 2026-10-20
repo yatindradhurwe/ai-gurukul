@@ -27,15 +27,44 @@ export const SuccessNote = ({ message }: { message: string | null }) =>
     </div>
   ) : null;
 
+/** Empty state with a small layered illustration around the icon. */
 export const Empty = ({ title, children, icon = "layers" }: { title: string; children?: ReactNode; icon?: IconName }) => (
-  <div className="rounded-2xl border border-dashed border-slate-300 bg-surface/50 px-6 py-10 text-center">
-    <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-soft text-brand">
-      <Icon name={icon} size={20} />
+  <div className="rounded-[2rem] border border-dashed border-slate-300 bg-white/60 px-6 py-12 text-center">
+    <div className="relative mx-auto mb-4 h-24 w-28">
+      <span className="absolute left-1 top-5 h-16 w-16 rounded-full bg-amber-200/70" />
+      <span className="absolute right-0 top-1 h-14 w-14 rounded-full bg-sky-200/70" />
+      <span className="absolute bottom-0 left-8 h-10 w-10 rounded-full bg-pink-200/70" />
+      <span className="absolute left-1/2 top-1/2 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-2xl bg-white text-brand shadow-lift ring-1 ring-slate-200 animate-float">
+        <Icon name={icon} size={26} />
+      </span>
+      <span className="absolute right-3 top-0 text-amber-400">
+        <Icon name="star" size={14} className="fill-amber-300" />
+      </span>
     </div>
-    <p className="font-semibold text-slate-800">{title}</p>
+    <p className="text-base font-semibold text-slate-800">{title}</p>
     {children && <div className="mx-auto mt-1 max-w-md text-sm text-slate-500">{children}</div>}
   </div>
 );
+
+/** A ring chart for one share of a whole (e.g. fees collected of billed). */
+export function Donut({ value, total, label, sub, color = "#6366f1" }: { value: number; total: number; label: string; sub?: string; color?: string }) {
+  const pctValue = total > 0 ? Math.min(100, (value / total) * 100) : 0;
+  const r = 42;
+  const c = 2 * Math.PI * r;
+  return (
+    <div className="flex items-center gap-4">
+      <svg viewBox="0 0 100 100" className="h-24 w-24 shrink-0 -rotate-90" aria-hidden>
+        <circle cx="50" cy="50" r={r} fill="none" stroke="rgb(var(--slate-100))" strokeWidth="12" />
+        <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="12" strokeLinecap="round" strokeDasharray={`${(pctValue / 100) * c} ${c}`} className="transition-all duration-700" />
+      </svg>
+      <div>
+        <p className="text-2xl font-bold text-slate-900">{Math.round(pctValue)}%</p>
+        <p className="text-sm font-semibold text-slate-700">{label}</p>
+        {sub && <p className="text-xs text-slate-500">{sub}</p>}
+      </div>
+    </div>
+  );
+}
 
 export function Progress({ value, tone = "brand" }: { value: number; tone?: "brand" | "green" | "amber" | "red" }) {
   const color = tone === "green" ? "bg-emerald-500" : tone === "amber" ? "bg-amber-500" : tone === "red" ? "bg-rose-500" : "bg-brand";
@@ -196,7 +225,7 @@ export const fmtDate = (d: string | null | undefined, opts: Intl.DateTimeFormatO
   d ? new Date(d.length === 10 ? `${d}T00:00:00` : d).toLocaleDateString("en-IN", opts) : "—";
 
 export const fmtDateTime = (d: string | null | undefined) =>
-  d ? new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "—";
+  d ? new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "—";
 
 export const todayISO = () => {
   const d = new Date();

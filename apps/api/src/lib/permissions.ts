@@ -26,6 +26,9 @@ export const PERMISSIONS = [
   "library.manage",
   "transport.manage",
   "hostel.manage",
+  "admissions.manage",
+  "payroll.manage",
+  "leave.approve",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -36,6 +39,7 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "members.manage", "curriculum.read", "content.manage", "assessments.manage",
     "planner.manage_students", "reports.class", "reports.tenant", "usage.read", "classes.manage",
     "announcements.manage", "fees.manage", "exams.manage", "library.manage", "transport.manage", "hostel.manage",
+    "admissions.manage", "payroll.manage", "leave.approve",
   ],
   teacher: [
     "curriculum.read", "content.manage", "assessments.manage", "assessments.review",
@@ -43,9 +47,9 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   ],
   // Staff / HR: people administration and organisation reports, but no access to
   // individual students' academic records, content or classes.
-  staff: ["curriculum.read", "members.manage", "reports.tenant", "usage.read", "announcements.manage", "fees.manage", "library.manage", "transport.manage", "hostel.manage"],
+  staff: ["curriculum.read", "members.manage", "reports.tenant", "usage.read", "announcements.manage", "fees.manage", "library.manage", "transport.manage", "hostel.manage", "admissions.manage", "payroll.manage", "leave.approve"],
   // Accountant: fee collection only. Librarian: the library only.
-  accountant: ["curriculum.read", "fees.manage"],
+  accountant: ["curriculum.read", "fees.manage", "payroll.manage"],
   librarian: ["curriculum.read", "library.manage"],
   // Transport manager: buses, routes and riders. Warden: hostel rooms and residents.
   transport_manager: ["curriculum.read", "transport.manage"],
@@ -54,6 +58,9 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   parent: ["curriculum.read", "reports.children", "tenant.billing"],
   student: ["curriculum.read", "tutor.use", "assessments.take", "planner.self", "reports.self", "classes.attend"],
 };
+
+/** Roles held by school employees (they get staff attendance, leave and payslips). */
+export const STAFF_ROLES = ["tenant_owner", "tenant_admin", "teacher", "staff", "accountant", "librarian", "transport_manager", "warden", "content_reviewer"];
 
 export const ROLE_NAMES: Record<string, string> = {
   tenant_owner: "Tenant owner",

@@ -69,9 +69,23 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    label: "Connect",
+    icon: "send",
+    items: [
+      { to: "/messages", label: "Messages", icon: "send", hint: "Chat with teachers and the office", show: () => true },
+      { to: "/announcements", label: "Announcements", icon: "megaphone", hint: "School and class notices", show: () => true },
+      { to: "/meetings", label: "Parent-teacher meetings", icon: "users", hint: "Book or publish PTM slots", show: (can) => staff(can) || parent(can) },
+      { to: "/leave", label: "Leave", icon: "calendar", hint: "Apply and approve leave", show: () => true },
+      { to: "/calendar", label: "School calendar", icon: "star", hint: "Holidays, exams and events", show: () => true },
+    ],
+  },
+  {
     label: "Admin",
     icon: "shield",
     items: [
+      { to: "/admissions", label: "Admissions", icon: "graduation", hint: "Enquiries to admitted students", show: (can) => can("admissions.manage") },
+      { to: "/id-cards", label: "ID cards", icon: "file", hint: "Cards and certificates", show: (can) => can("admissions.manage") || can("members.manage") },
+      { to: "/staff", label: "Staff & payroll", icon: "card", hint: "HR records and payslips", show: (can) => can("payroll.manage") },
       { to: "/content", label: "Content", icon: "folder", hint: "Course material", show: (can) => can("content.manage") || can("content.review") },
       { to: "/people", label: "People", icon: "users", hint: "Members and invitations", show: (can) => can("members.manage") },
       { to: "/billing", label: "Subscription", icon: "sliders", hint: "Plan and billing", show: (can) => can("tenant.billing") },
@@ -121,7 +135,7 @@ function Brand() {
 }
 
 const pill = (active: boolean) =>
-  `inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-sm font-semibold transition ${
+  `inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-2 text-sm font-semibold transition 2xl:px-3 [&>svg:first-child]:hidden 2xl:[&>svg:first-child]:inline ${
     active ? "bg-brand text-white shadow-md shadow-brand/30" : "text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm"
   }`;
 
@@ -181,16 +195,13 @@ function DesktopNav() {
     };
   }, []);
   return (
-    <nav ref={ref} className="hidden items-center gap-1 rounded-full bg-slate-100/80 p-1 xl:flex" aria-label="Main">
+    <nav ref={ref} className="hidden items-center gap-0.5 rounded-full bg-slate-100/80 p-1 xl:flex" aria-label="Main">
       <NavLink to="/" end className={({ isActive: a }) => pill(a)}>
         <Icon name="dashboard" size={16} /> Dashboard
       </NavLink>
       {groups.map((g) => (
         <GroupMenu key={g.label} group={g} open={open === g.label} onOpen={() => setOpen(g.label)} onClose={() => setOpen(null)} />
       ))}
-      <NavLink to="/announcements" className={({ isActive: a }) => pill(a)}>
-        <Icon name="megaphone" size={16} /> Notices
-      </NavLink>
     </nav>
   );
 }
@@ -219,7 +230,6 @@ function MobileMenu({ onClose }: { onClose: () => void }) {
         </div>
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
           {item({ to: "/", label: "Dashboard", icon: "dashboard" })}
-          {item({ to: "/announcements", label: "Notices", icon: "megaphone" })}
         </div>
         {groups.map((g) => (
           <div key={g.label} className="mt-5">
@@ -232,8 +242,11 @@ function MobileMenu({ onClose }: { onClose: () => void }) {
   );
 }
 
+const EMPLOYEE_ROLES = ["tenant_owner", "tenant_admin", "teacher", "staff", "accountant", "librarian", "transport_manager", "warden", "content_reviewer"];
+
 function UserMenu() {
-  const { user, tenant, memberships, logout, switchTenant } = useAuth();
+  const { user, tenant, memberships, logout, switchTenant, info } = useAuth();
+  const isStaff = (info?.roles ?? []).some((r) => EMPLOYEE_ROLES.includes(r));
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -272,12 +285,43 @@ function UserMenu() {
               </select>
             </div>
           )}
+          <div className="border-b border-slate-100 py-1">
+            {(isStaff || info?.studentProfileId) && (
+              <Link to="/id-cards/me" onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-2xl px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
+                <Icon name="file" size={16} /> My ID card
+              </Link>
+            )}
+            {isStaff && (
+              <Link to="/payslips" onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-2xl px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
+                <Icon name="card" size={16} /> My payslips
+              </Link>
+            )}
+          </div>
           <button className="mt-1 flex w-full items-center gap-2 rounded-2xl px-3 py-2 text-sm text-slate-600 hover:bg-slate-100 hover:text-red-600" onClick={logout}>
             <Icon name="logout" size={16} /> Sign out
           </button>
         </div>
       )}
     </div>
+  );
+}
+
+function MessagesIcon() {
+  const { tenant } = useAuth();
+  const { pathname } = useLocation();
+  const inbox = useApi<{ unread: number }>(tenant ? "/messages/conversations" : null);
+  const { reload } = inbox;
+  useEffect(() => {
+    reload();
+  }, [pathname, reload]);
+  const unread = inbox.data?.unread ?? 0;
+  return (
+    <Link to="/messages" className="relative rounded-full bg-white p-2.5 text-slate-600 shadow-sm ring-1 ring-slate-200 transition hover:text-slate-900 hover:shadow-md" aria-label={`Messages${unread ? `, ${unread} unread` : ""}`}>
+      <Icon name="send" size={18} />
+      {unread > 0 && (
+        <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-bold text-white ring-2 ring-white">{unread > 9 ? "9+" : unread}</span>
+      )}
+    </Link>
   );
 }
 
@@ -332,6 +376,9 @@ function usePageTitle() {
   if (pathname.startsWith("/live/")) return "Live classroom";
   if (pathname.startsWith("/fees/receipts/")) return "Fee receipt";
   if (pathname.startsWith("/announcements")) return "Announcements";
+  if (pathname.startsWith("/id-cards/me")) return "My ID card";
+  if (pathname.startsWith("/certificates/")) return "Certificate";
+  if (pathname.startsWith("/payslips")) return "Payslips";
   const all = NAV.flatMap((g) => g.items);
   return all.filter((n) => isActive(pathname, n.to)).sort((a, b) => b.to.length - a.to.length)[0]?.label ?? "AI Gurukul";
 }
@@ -355,6 +402,7 @@ export function Layout() {
           </div>
           <div className="flex items-center gap-2">
             <XpChip />
+            <MessagesIcon />
             <Bell />
             <UserMenu />
             <button className="rounded-full bg-white p-2.5 text-slate-700 shadow-sm ring-1 ring-slate-200 xl:hidden" onClick={() => setMenu(true)} aria-label="Open menu">

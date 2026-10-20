@@ -28,7 +28,11 @@ import { gradebookRouter } from "./modules/lms/gradebook.js";
 import { timetableRouter } from "./modules/lms/timetable.js";
 import { examsRouter } from "./modules/school/exams.js";
 import { feesRouter } from "./modules/school/fees.js";
+import { admissionsRouter, idCardsRouter, publicAdmissionsRouter } from "./modules/school/admissions.js";
 import { engagementRouter } from "./modules/school/engagement.js";
+import { hrRouter } from "./modules/school/hr.js";
+import { eventsRouter, leaveRouter } from "./modules/school/leave.js";
+import { messagesRouter, ptmRouter } from "./modules/school/messaging.js";
 import { hostelRouter } from "./modules/school/hostel.js";
 import { libraryRouter } from "./modules/school/library.js";
 import { transportRouter } from "./modules/school/transport.js";
@@ -84,6 +88,15 @@ export function createApp() {
   app.use("/api/v1/transport", tenantScoped, transportRouter);
   app.use("/api/v1/hostels", tenantScoped, hostelRouter);
   app.use("/api/v1/engagement", tenantScoped, engagementRouter);
+  app.use("/api/v1/messages", tenantScoped, messagesRouter);
+  app.use("/api/v1/ptm", tenantScoped, ptmRouter);
+  app.use("/api/v1/leave", tenantScoped, leaveRouter);
+  app.use("/api/v1/events", tenantScoped, eventsRouter);
+  app.use("/api/v1/admissions", tenantScoped, admissionsRouter);
+  app.use("/api/v1/id-cards", tenantScoped, idCardsRouter);
+  app.use("/api/v1/hr", tenantScoped, hrRouter);
+  // Public (no sign-in): a school's online admission form.
+  app.use("/api/v1/public/admissions", publicAdmissionsRouter);
 
   // Single-app deployments: serve the built React app and fall back to index.html for client routes.
   const webDist = env.WEB_DIST_DIR ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");

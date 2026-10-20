@@ -1,10 +1,17 @@
 import React, { type ReactNode } from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { NoAccess, Spinner } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
+import { AdmissionsPage, PublicApplyPage } from "./pages/AdmissionsPage";
 import { AnnouncementsPage } from "./pages/AnnouncementsPage";
+import { CalendarPage } from "./pages/CalendarPage";
+import { CertificatePage, IdCardsPage, MyIdCardPage } from "./pages/IdCardsPage";
+import { LeavePage } from "./pages/LeavePage";
+import { MeetingsPage } from "./pages/MeetingsPage";
+import { MessagesPage } from "./pages/MessagesPage";
+import { MyPayslipsPage, PayslipPage, StaffPage } from "./pages/StaffPage";
 import { AssignmentDetailPage, AssignmentsPage } from "./pages/AssignmentsPage";
 import { AttendancePage } from "./pages/AttendancePage";
 import { AuthPage } from "./pages/AuthPage";
@@ -49,6 +56,14 @@ const FEES = ["fees.manage", "classes.attend", "reports.children"];
 
 function App() {
   const { user, loading, info } = useAuth();
+  const { pathname } = useLocation();
+  // The public admission form works without signing in.
+  if (pathname.startsWith("/apply/"))
+    return (
+      <Routes>
+        <Route path="/apply/:slug" element={<PublicApplyPage />} />
+      </Routes>
+    );
   if (loading) return <Spinner />;
   if (!user) return <AuthPage />;
   const home = user.is_platform_admin && !info ? <Navigate to="/platform" replace /> : <DashboardPage />;
@@ -76,6 +91,18 @@ function App() {
         <Route path="library" element={<LibraryPage />} />
         <Route path="transport" element={<Guard any={["transport.manage", "classes.attend", "reports.children"]} what="transport"><TransportPage /></Guard>} />
         <Route path="hostel" element={<Guard any={["hostel.manage", "classes.attend", "reports.children"]} what="the hostel"><HostelPage /></Guard>} />
+        <Route path="messages" element={<MessagesPage />} />
+        <Route path="messages/:id" element={<MessagesPage />} />
+        <Route path="meetings" element={<Guard any={["classes.manage", "reports.children"]} what="meetings"><MeetingsPage /></Guard>} />
+        <Route path="leave" element={<LeavePage />} />
+        <Route path="calendar" element={<CalendarPage />} />
+        <Route path="admissions" element={<Guard any={["admissions.manage"]} what="admissions"><AdmissionsPage /></Guard>} />
+        <Route path="id-cards" element={<Guard any={["admissions.manage", "members.manage"]} what="ID cards"><IdCardsPage /></Guard>} />
+        <Route path="id-cards/me" element={<MyIdCardPage />} />
+        <Route path="certificates/:studentId" element={<Guard any={["admissions.manage"]} what="certificates"><CertificatePage /></Guard>} />
+        <Route path="staff" element={<Guard any={["payroll.manage"]} what="staff & payroll"><StaffPage /></Guard>} />
+        <Route path="payslips" element={<MyPayslipsPage />} />
+        <Route path="payslips/:id" element={<PayslipPage />} />
         <Route path="rewards" element={<Guard any={["classes.attend", "reports.children"]} what="rewards"><RewardsPage /></Guard>} />
         <Route path="plan" element={<Guard any={["planner.self"]} what="the study plan"><PlanPage /></Guard>} />
         <Route path="results" element={<Guard any={["reports.self"]} what="results"><ResultsPage /></Guard>} />

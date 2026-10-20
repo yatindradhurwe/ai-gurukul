@@ -4,6 +4,7 @@ import { asyncHandler, requireAuth, requireTenant } from "../../lib/http.js";
 import { round1, visibleClassesSql } from "./access.js";
 import { ATTENDED_SQL, COUNTED_SQL } from "./attendance.js";
 import { INVOICE_COLUMNS, INVOICE_STATE } from "../school/fees.js";
+import { reviewableSql } from "../school/leave.js";
 
 export const dashboardRouter = Router();
 
@@ -38,7 +39,7 @@ dashboardRouter.get(
         const att = (await db.query(`SELECT ${ATTENDED_SQL}::int AS attended, ${COUNTED_SQL}::int AS counted FROM attendance_records WHERE date = ${TODAY}`)).rows[0];
         const week = await db.query(
           `SELECT date, ${ATTENDED_SQL}::int AS attended, ${COUNTED_SQL}::int AS counted FROM attendance_records
-            WHERE date > ${TODAY} - 7 GROUP BY date ORDER BY date`,
+            WHERE date > ${TODAY} - 7 AND date <= ${TODAY} GROUP BY date ORDER BY date`,
         );
         const live = (await db.query(`SELECT count(*)::int AS n FROM live_sessions WHERE status = 'live'`)).rows[0].n;
         out.organization = {
@@ -208,6 +209,21 @@ dashboardRouter.get(
           )
         ).rows[0];
       }
+
+      // Things waiting on the caller: leave to review, new enquiries, meetings today.
+      const review = reviewableSql(req, 1);
+      const attention = {
+        leaveToReview: (await db.query(`SELECT count(*)::int AS n FROM leave_requests l WHERE l.status = 'pending' AND ${review.sql}`, review.params)).rows[0].n,
+        newEnquiries: p.has("admissions.manage") ? (await db.query(`SELECT count(*)::int AS n FROM admission_applications WHERE status = 'enquiry'`)).rows[0].n : 0,
+        meetingsToday: (
+          await db.query(
+            `SELECT count(*)::int AS n FROM ptm_slots WHERE (teacher_id = $1 OR booked_by = $1) AND booked_by IS NOT NULL
+                AND (starts_at AT TIME ZONE 'Asia/Kolkata')::date = ${TODAY}`,
+            [userId],
+          )
+        ).rows[0].n,
+      };
+      if (attention.leaveToReview || attention.newEnquiries || attention.meetingsToday) out.attention = attention;
 
       return out;
     });

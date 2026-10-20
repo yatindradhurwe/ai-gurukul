@@ -57,6 +57,13 @@ describe.skipIf(!dbAvailable)("demo accounts setup", () => {
     expect((await request(app).get("/api/v1/transport/routes").set(await as("transport")).expect(200)).body.summary.riders).toBe(2);
     expect((await request(app).get("/api/v1/engagement/me").set(await as("student1")).expect(200)).body.xp).toBeGreaterThan(0);
 
+    // Office records: HR profiles, a parent-teacher thread, PTM slots, admission enquiries.
+    expect((await request(app).get("/api/v1/hr/staff").set(await as("staff")).expect(200)).body.staff.filter((s: any) => s.employee_code)).toHaveLength(8);
+    expect((await request(app).get("/api/v1/messages/conversations").set(await as("teacher")).expect(200)).body.conversations).toHaveLength(1);
+    expect((await request(app).get("/api/v1/ptm/available").set(await as("parent")).expect(200)).body.available.length).toBeGreaterThan(0);
+    expect((await request(app).get("/api/v1/admissions").set(await as("admin")).expect(200)).body.applications).toHaveLength(3);
+    expect((await request(app).get("/api/v1/leave/review?status=pending").set(await as("teacher")).expect(200)).body.requests).toHaveLength(1);
+
     // Re-running keeps passwords unless asked to reset, and does not duplicate data.
     const second = await setupDemo();
     expect(second.every((r) => r.password === null)).toBe(true);

@@ -8,6 +8,8 @@ It combines four things:
 - **A rules-driven academic planner.** It works from the syllabus, marks, mastery evidence, exam dates and the time a student actually has. It shows when there isn't enough time, and it creates a new version of the plan after a disruption.
 - **Live AI classrooms.** A talking avatar teacher teaches a class in real time, and students ask doubts by voice or text. The avatar answers each doubt aloud for the whole class from approved material, and doubts outside the material go to the human teacher. See [Live classrooms](#live-ai-classrooms).
 - **Talking avatar lessons behind a provider-neutral interface.** A text lesson with captions is always available as a fallback.
+- **Messaging, PTM, leave and calendar.** Safe parent–teacher and student–teacher messaging, bookable parent-teacher meeting slots, leave and hostel out-pass requests with approvals that update attendance, and a school calendar.
+- **Admissions, ID cards and HR.** A public admission form and pipeline that creates student and parent accounts, printable ID cards and certificates, and staff profiles, attendance, leave balances and monthly payslips.
 - **Transport and hostels.** Buses, routes with timed stops and seat limits, riders, and a "My bus" view with driver contacts; hostels with rooms, beds, allocations and a "My room" view.
 - **Rewards for students.** XP from real learning activity, levels, day streaks, daily quests, badges and a class top-learners board, with celebrations when students level up.
 - **Fees, exams and library.** Fee structures billed per class with concessions, payments and printable receipts; exam date sheets whose papers feed the gradebook, with ranked results declared to students and parents; a library catalogue with issue, return, renewals and late fines.
@@ -88,7 +90,7 @@ Environment variables:
 | `SUPERADMIN_EMAIL` | Use your own email for the super-admin |
 | `DEMO_EMAIL_DOMAIN` | Change the email domain for all demo accounts |
 
-Demo School also gets sample records the first time: a weekly timetable, announcements, two assignments (one graded), five days of attendance, two marked assessments, fees with receipts, a published half-yearly date sheet, a small library with books on loan, two bus routes and two hostels, so every screen has data.
+Demo School also gets sample records the first time: a weekly timetable, announcements, two assignments (one graded), five days of attendance, two marked assessments, fees with receipts, a published half-yearly date sheet, a small library with books on loan, two bus routes, two hostels, staff salaries, calendar events, a parent–teacher conversation, meeting slots and admission enquiries, so every screen has data. Parents can apply online at `/apply/demo-school`.
 
 The script is safe to run again: existing accounts keep their passwords unless you pass `--reset-passwords`. Change or remove demo accounts before real users join.
 
