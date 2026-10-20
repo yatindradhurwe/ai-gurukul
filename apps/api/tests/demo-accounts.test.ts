@@ -64,6 +64,12 @@ describe.skipIf(!dbAvailable)("demo accounts setup", () => {
     expect((await request(app).get("/api/v1/admissions").set(await as("admin")).expect(200)).body.applications).toHaveLength(3);
     expect((await request(app).get("/api/v1/leave/review?status=pending").set(await as("teacher")).expect(200)).body.requests).toHaveLength(1);
 
+    // Academics: a 2026-27 session, three subjects with generated plans, visible to the principal and the student.
+    const overview = (await request(app).get("/api/v1/academics/overview").set(await as("principal")).expect(200)).body;
+    expect(overview.subjects).toEqual(["English", "Mathematics", "Science"]);
+    expect(overview.cells.every((c: any) => c.total > 0)).toBe(true);
+    expect((await request(app).get("/api/v1/academics/student").set(await as("student1")).expect(200)).body.subjects).toHaveLength(3);
+
     // Re-running keeps passwords unless asked to reset, and does not duplicate data.
     const second = await setupDemo();
     expect(second.every((r) => r.password === null)).toBe(true);

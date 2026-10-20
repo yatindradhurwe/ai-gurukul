@@ -15,6 +15,8 @@ import { fileURLToPath } from "node:url";
 import { hashPassword } from "../../lib/crypto.js";
 import { enterSystemContext, pool, type Db } from "../pool.js";
 import { seed } from "./seed.js";
+import { holidaysBetween } from "../../modules/academics/holidays.js";
+import { generatePlan } from "../../modules/academics/routes.js";
 
 const DOMAIN = process.env.DEMO_EMAIL_DOMAIN ?? "demo.aigurukul.test";
 
@@ -392,6 +394,90 @@ async function seedOfficeRecords(db: Db, c: { tenantId: string; ids: Record<stri
                    WHERE tenant_id = $1 AND admission_no IS NULL`, [t, s1]);
 }
 
+/**
+ * The 2026-27 session with two terms and holidays, CBSE Class 8 profile for the demo class,
+ * Science (from the built-in library), Mathematics and English syllabi, and generated plans
+ * with a few chapters already taught. Added once.
+ */
+async function seedAcademics(db: Db, c: { tenantId: string; classId: string; ids: Record<string, string> }) {
+  const done = await db.query(`SELECT 1 FROM academic_years WHERE tenant_id = $1 LIMIT 1`, [c.tenantId]);
+  if (done.rowCount) return;
+  const { tenantId: t, classId, ids } = c;
+  const year = (
+    await db.query(`INSERT INTO academic_years (tenant_id, name, start_date, end_date, is_current) VALUES ($1,'2026-27','2026-04-01','2027-03-31',true) RETURNING id`, [t])
+  ).rows[0].id;
+  await db.query(
+    `INSERT INTO academic_terms (tenant_id, year_id, name, sequence, start_date, end_date, exam_start, exam_end) VALUES
+       ($1,$2,'Term 1',1,'2026-04-01','2026-09-30','2026-09-15','2026-09-30'),
+       ($1,$2,'Term 2',2,'2026-10-01','2027-03-31','2027-03-01','2027-03-20')`,
+    [t, year],
+  );
+  const holidays = [...holidaysBetween("2026-04-01", "2027-03-31"), { date: "2026-05-15", name: "Summer vacation", end: "2026-06-14" }];
+  for (const h of holidays) {
+    const dup = await db.query(`SELECT 1 FROM school_events WHERE tenant_id = $1 AND kind = 'holiday' AND start_date = $2`, [t, h.date]);
+    if (dup.rowCount) continue;
+    await db.query(`INSERT INTO school_events (tenant_id, title, kind, start_date, end_date, audience, created_by) VALUES ($1,$2,'holiday',$3,$4,'all',$5)`, [
+      t,
+      h.name,
+      h.date,
+      "end" in h ? h.end : h.date,
+      ids.principal,
+    ]);
+  }
+  await db.query(`UPDATE classes SET board = 'CBSE', grade = 'Class 8', section = 'A', academic_year_id = $2 WHERE id = $1`, [classId, year]);
+
+  const syllabus = async (subject: string, chapters: [string, number][], source: string) => {
+    const s = (await db.query(`INSERT INTO syllabi (tenant_id, board, grade, subject, academic_year_id, source) VALUES ($1,'CBSE','Class 8',$2,$3,$4) RETURNING id`, [t, subject, year, source])).rows[0].id;
+    for (let i = 0; i < chapters.length; i++) {
+      await db.query(`INSERT INTO syllabus_units (tenant_id, syllabus_id, title, sequence, est_periods) VALUES ($1,$2,$3,$4,$5)`, [t, s, chapters[i][0], i + 1, chapters[i][1]]);
+    }
+    return s as string;
+  };
+  const sciChapters = (
+    await db.query(
+      `SELECT ch.title, (SELECT count(*)::int FROM topics tp WHERE tp.chapter_id = ch.id) AS topics FROM chapters ch JOIN subjects s ON s.id = ch.subject_id
+         JOIN curriculum_versions cv ON cv.id = ch.curriculum_version_id WHERE s.name = 'Science' AND cv.approval_status = 'approved' ORDER BY ch.sequence`,
+    )
+  ).rows.map((r) => [r.title, Math.min(20, Math.max(4, r.topics * 3))] as [string, number]);
+  const sample = "Sample chapter list — replace with your board's current syllabus";
+  const science = await syllabus("Science", sciChapters, "Built-in library");
+  const maths = await syllabus(
+    "Mathematics",
+    [
+      ["Rational Numbers", 12], ["Linear Equations in One Variable", 14], ["Understanding Quadrilaterals", 10], ["Data Handling", 10],
+      ["Squares and Square Roots", 10], ["Cubes and Cube Roots", 8], ["Comparing Quantities", 12], ["Algebraic Expressions and Identities", 12],
+      ["Mensuration", 14], ["Exponents and Powers", 8], ["Direct and Inverse Proportions", 10], ["Factorisation", 10], ["Introduction to Graphs", 8],
+    ],
+    sample,
+  );
+  const english = await syllabus(
+    "English",
+    [
+      ["The Best Christmas Present in the World", 8], ["The Tsunami", 8], ["Glimpses of the Past", 8], ["Bepin Choudhury's Lapse of Memory", 8],
+      ["The Summit Within", 6], ["This is Jody's Fawn", 8], ["A Visit to Cambridge", 6], ["A Short Monsoon Diary", 6], ["The Great Stone Face", 10],
+    ],
+    sample,
+  );
+  const subjects: [string, string, number, string][] = [
+    ["Science", ids.teacher, 6, science],
+    ["Mathematics", ids.principal, 6, maths],
+    ["English", ids.admin, 5, english],
+  ];
+  // Taught so far: maths has fallen a chapter behind; English is ahead.
+  const taught: Record<string, number> = { Science: 3, Mathematics: 4, English: 5 };
+  for (const [subject, teacher, periods, syl] of subjects) {
+    const cs = (
+      await db.query(`INSERT INTO class_subjects (tenant_id, class_id, subject, teacher_id, periods_per_week, syllabus_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`, [t, classId, subject, teacher, periods, syl])
+    ).rows[0].id;
+    await generatePlan(db, t, cs, { from: "2026-04-01" });
+    await db.query(
+      `UPDATE syllabus_plan_items p SET status = 'completed', completed_on = LEAST(p.planned_end, (now() AT TIME ZONE 'Asia/Kolkata')::date)
+        FROM syllabus_units u WHERE u.id = p.unit_id AND p.class_subject_id = $1 AND u.sequence <= $2`,
+      [cs, taught[subject]],
+    );
+  }
+}
+
 export async function setupDemo(opts: { reset?: boolean; password?: string; superadminPassword?: string } = {}) {
   await seed(() => {});
   const db = await pool.connect();
@@ -455,6 +541,7 @@ export async function setupDemo(opts: { reset?: boolean; password?: string; supe
     await seedCampusRecords(db, { tenantId: tenant.id, classId: cls.id, ids, s1, s2 });
     await seedTransportAndHostel(db, { tenantId: tenant.id, ids, s1, s2 });
     await seedOfficeRecords(db, { tenantId: tenant.id, ids, s1 });
+    await seedAcademics(db, { tenantId: tenant.id, classId: cls.id, ids });
     await db.query("COMMIT");
   } catch (err) {
     await db.query("ROLLBACK");

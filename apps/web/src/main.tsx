@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-route
 import { Layout } from "./components/Layout";
 import { NoAccess, Spinner } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
+import { AcademicSetupPage, AcademicsPage, MySyllabusPage, SubjectPlanPage } from "./pages/AcademicsPage";
 import { AdmissionsPage, PublicApplyPage } from "./pages/AdmissionsPage";
 import { AnnouncementsPage } from "./pages/AnnouncementsPage";
 import { CalendarPage } from "./pages/CalendarPage";
@@ -91,6 +92,10 @@ function App() {
         <Route path="library" element={<LibraryPage />} />
         <Route path="transport" element={<Guard any={["transport.manage", "classes.attend", "reports.children"]} what="transport"><TransportPage /></Guard>} />
         <Route path="hostel" element={<Guard any={["hostel.manage", "classes.attend", "reports.children"]} what="the hostel"><HostelPage /></Guard>} />
+        <Route path="syllabus" element={<Guard any={[...CLASSROOM_OR_PARENT]} what="the syllabus"><MySyllabusPage /></Guard>} />
+        <Route path="academics" element={<Guard any={["academics.manage", "reports.tenant"]} what="the syllabus tracker"><AcademicsPage /></Guard>} />
+        <Route path="academics/setup" element={<Guard any={["academics.manage"]} what="academic setup"><AcademicSetupPage /></Guard>} />
+        <Route path="academics/plan/:id" element={<SubjectPlanPage />} />
         <Route path="messages" element={<MessagesPage />} />
         <Route path="messages/:id" element={<MessagesPage />} />
         <Route path="meetings" element={<Guard any={["classes.manage", "reports.children"]} what="meetings"><MeetingsPage /></Guard>} />

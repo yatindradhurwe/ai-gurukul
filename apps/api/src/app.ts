@@ -28,6 +28,7 @@ import { gradebookRouter } from "./modules/lms/gradebook.js";
 import { timetableRouter } from "./modules/lms/timetable.js";
 import { examsRouter } from "./modules/school/exams.js";
 import { feesRouter } from "./modules/school/fees.js";
+import { academicsRouter } from "./modules/academics/routes.js";
 import { admissionsRouter, idCardsRouter, publicAdmissionsRouter } from "./modules/school/admissions.js";
 import { engagementRouter } from "./modules/school/engagement.js";
 import { hrRouter } from "./modules/school/hr.js";
@@ -95,6 +96,7 @@ export function createApp() {
   app.use("/api/v1/admissions", tenantScoped, admissionsRouter);
   app.use("/api/v1/id-cards", tenantScoped, idCardsRouter);
   app.use("/api/v1/hr", tenantScoped, hrRouter);
+  app.use("/api/v1/academics", tenantScoped, academicsRouter);
   // Public (no sign-in): a school's online admission form.
   app.use("/api/v1/public/admissions", publicAdmissionsRouter);
 

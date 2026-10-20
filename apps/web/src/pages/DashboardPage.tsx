@@ -78,6 +78,7 @@ export function DashboardPage() {
   const reward = useApi<Engagement>(isStudent ? "/engagement/me" : null);
   const { news: toast, dismiss } = useCelebrations(reward.data);
   const feeSummary = useApi<any>(dash.data?.fees ? "/fees/summary" : null).data?.totals;
+  const syllabus = useApi<any>(isStudent ? "/academics/student" : null).data?.subjects as any[] | undefined;
   const news = useApi<any>("/announcements");
 
   if (dash.loading && !dash.data) return <Spinner />;
@@ -321,6 +322,24 @@ export function DashboardPage() {
                 </Link>
               )}
             </div>
+          )}
+
+          {syllabus && syllabus.length > 0 && (
+            <SectionCard title="In class this week" icon="book" action={<Link to="/syllabus" className="text-xs font-semibold text-brand">Syllabus →</Link>}>
+              <ul className="grid gap-2 sm:grid-cols-2">
+                {syllabus.map((s) => (
+                  <li key={s.id} className="rounded-2xl bg-slate-50 p-3">
+                    <p className="text-xs font-bold uppercase tracking-wider text-brand">{s.subject}</p>
+                    <p className="text-sm font-semibold text-slate-900">{s.now?.title ?? (s.total ? "All done! 🎉" : "Plan coming soon")}</p>
+                    {s.total > 0 && (
+                      <div className="mt-2">
+                        <Progress value={(s.completed / s.total) * 100} tone="green" />
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </SectionCard>
           )}
 
           {student && student.exams.length > 0 && (

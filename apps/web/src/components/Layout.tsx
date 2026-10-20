@@ -52,6 +52,8 @@ export const NAV: NavGroup[] = [
     label: "Academics",
     icon: "graduation",
     items: [
+      { to: "/syllabus", label: "Syllabus", icon: "book", hint: "Chapters now and next", show: (can) => staff(can) || learner(can) || parent(can) },
+      { to: "/academics", label: "Syllabus tracker", icon: "chart", hint: "Every class and subject", show: (can) => can("academics.manage") || can("reports.tenant") },
       { to: "/exams", label: "Exams", icon: "file", hint: "Date sheets and results", show: (can) => can("exams.manage") || staff(can) || learner(can) || parent(can) },
       { to: "/gradebook", label: "Gradebook", icon: "award", hint: "Enter marks", show: staff },
       { to: "/report-card", label: "Report card", icon: "chart", hint: "Grades and progress", show: (can) => learner(can) || parent(can) || staff(can) },
@@ -83,6 +85,7 @@ export const NAV: NavGroup[] = [
     label: "Admin",
     icon: "shield",
     items: [
+      { to: "/academics/setup", label: "Academic setup", icon: "sliders", hint: "Year, holidays, syllabi, subjects", show: (can) => can("academics.manage") },
       { to: "/admissions", label: "Admissions", icon: "graduation", hint: "Enquiries to admitted students", show: (can) => can("admissions.manage") },
       { to: "/id-cards", label: "ID cards", icon: "file", hint: "Cards and certificates", show: (can) => can("admissions.manage") || can("members.manage") },
       { to: "/staff", label: "Staff & payroll", icon: "card", hint: "HR records and payslips", show: (can) => can("payroll.manage") },
@@ -377,6 +380,8 @@ function usePageTitle() {
   if (pathname.startsWith("/fees/receipts/")) return "Fee receipt";
   if (pathname.startsWith("/announcements")) return "Announcements";
   if (pathname.startsWith("/id-cards/me")) return "My ID card";
+  if (pathname.startsWith("/academics/plan/")) return "Syllabus plan";
+  if (pathname.startsWith("/academics/setup")) return "Academic setup";
   if (pathname.startsWith("/certificates/")) return "Certificate";
   if (pathname.startsWith("/payslips")) return "Payslips";
   const all = NAV.flatMap((g) => g.items);

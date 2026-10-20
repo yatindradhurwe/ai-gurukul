@@ -266,6 +266,27 @@ XP comes from what students already do: lesson 20, quiz 15 + up to 15 for the sc
 | GET | `/hr/payroll?month`, `/hr/payslips/mine`, `/hr/payslips/:id` | payroll.manage / self (paid only) | |
 | POST | `/hr/payslips/:id/pay` | payroll.manage | |
 
+## Academic planning
+
+Owners and admins manage the academic structure (`academics.manage`). A subject's teacher can update and re-plan their own subject; other teachers of the class, its students and their parents can read it.
+
+| Method | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET / POST / PATCH | `/academics/years[/:id]` | member / academics.manage | Years with terms, teaching-day and holiday counts; one year is current |
+| POST / DELETE | `/academics/years/:id/terms`, `/academics/terms/:id` | academics.manage | `{name, startDate, endDate, examStart?, examEnd?}`; terms may not overlap |
+| GET | `/academics/years/:id/holiday-suggestions` | academics.manage | National holidays, plus 2026-27 festival dates marked approximate |
+| POST | `/academics/years/:id/holidays` | academics.manage | `{holidays: [{date, name, endDate?}]}` adds to the school calendar, skipping duplicates |
+| GET / POST / DELETE | `/academics/syllabi[/:id]` | member / academics.manage | By board, grade and subject; `units: [{title, estPeriods, term?}]` |
+| PUT | `/academics/syllabi/:id/units` | academics.manage | Replace the chapter list; chapters sent with their id keep their progress |
+| GET / POST | `/academics/library`, `/academics/syllabi/import` | academics.manage | Copy a built-in curriculum into the school's own syllabus |
+| GET / PATCH | `/academics/classes[/:id]` | academics.manage | Classes with board, grade, section, year and subjects with progress |
+| POST / PATCH / DELETE | `/academics/classes/:id/subjects`, `/academics/class-subjects/:id` | academics.manage | `{subject, teacherId?, periodsPerWeek, syllabusId?}`; the matching syllabus is linked automatically |
+| POST | `/academics/class-subjects/:id/plan`, `/academics/plans/generate` | subject teacher / academics.manage | Spreads remaining chapters over teaching days (Mon–Sat, minus holidays and exam windows), term by term, using the timetable's periods when it lists the subject |
+| GET | `/academics/class-subjects/:id/plan` | see above | Chapters with planned dates, status and term |
+| PATCH | `/academics/plan-items/:id` | subject teacher / academics.manage | `{status: planned\|in_progress\|completed, note?}` |
+| GET | `/academics/overview` | academics.manage / reports.tenant | Every class × subject: chapters done, due, behind, current chapter |
+| GET | `/academics/my-subjects`, `/academics/student?studentId` | teacher / self / parent | A teacher's subjects; a student's subjects with the chapter now and next |
+
 ## Parents
 
 | Method | Path | Permission | Notes |

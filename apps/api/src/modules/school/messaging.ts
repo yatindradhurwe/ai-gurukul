@@ -19,7 +19,8 @@ async function teachersOf(db: Db, studentIds: string[]) {
   return (
     await db.query(
       `SELECT c.teacher_id AS id FROM class_enrollments e JOIN classes c ON c.id = e.class_id WHERE e.student_id = ANY($1::uuid[])
-       UNION SELECT t.teacher_id FROM class_enrollments e JOIN timetable_slots t ON t.class_id = e.class_id WHERE e.student_id = ANY($1::uuid[]) AND t.teacher_id IS NOT NULL`,
+       UNION SELECT t.teacher_id FROM class_enrollments e JOIN timetable_slots t ON t.class_id = e.class_id WHERE e.student_id = ANY($1::uuid[]) AND t.teacher_id IS NOT NULL
+       UNION SELECT cs.teacher_id FROM class_enrollments e JOIN class_subjects cs ON cs.class_id = e.class_id WHERE e.student_id = ANY($1::uuid[]) AND cs.teacher_id IS NOT NULL`,
       [studentIds],
     )
   ).rows.map((r) => r.id as string);
