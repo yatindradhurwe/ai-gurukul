@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { withSystem } from "../database/pool.js";
 import { forbidden, notFound, unauthorized } from "../lib/errors.js";
-import { ROLE_PERMISSIONS, type Permission } from "../lib/permissions.js";
+import { permissionsFor, type AccessOverrides, type Permission } from "../lib/permissions.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -19,15 +19,15 @@ export async function resolveTenant(req: Request, _res: Response, next: NextFunc
     const host = (req.header("x-forwarded-host") ?? req.hostname ?? "").toLowerCase();
 
     const ctx = await withSystem(async (db) => {
-      let tenant: { id: string; type: string; slug: string; status: string } | undefined;
+      let tenant: { id: string; type: string; slug: string; status: string; access: AccessOverrides | null } | undefined;
       if (headerId && UUID_RE.test(headerId)) {
-        tenant = (await db.query("SELECT id, type, slug, status FROM tenants WHERE id = $1", [headerId])).rows[0];
+        tenant = (await db.query("SELECT id, type, slug, status, settings -> 'access' AS access FROM tenants WHERE id = $1", [headerId])).rows[0];
       } else if (headerSlug) {
-        tenant = (await db.query("SELECT id, type, slug, status FROM tenants WHERE slug = $1", [headerSlug])).rows[0];
+        tenant = (await db.query("SELECT id, type, slug, status, settings -> 'access' AS access FROM tenants WHERE slug = $1", [headerSlug])).rows[0];
       } else if (host) {
         tenant = (
           await db.query(
-            `SELECT t.id, t.type, t.slug, t.status FROM tenant_domains d JOIN tenants t ON t.id = d.tenant_id
+            `SELECT t.id, t.type, t.slug, t.status, t.settings -> 'access' AS access FROM tenant_domains d JOIN tenants t ON t.id = d.tenant_id
              WHERE lower(d.domain) = $1 AND d.verification_status = 'verified'`,
             [host],
           )
@@ -42,7 +42,7 @@ export async function resolveTenant(req: Request, _res: Response, next: NextFunc
       );
       if (memberships.rowCount === 0) throw forbidden("You are not a member of this organization");
       const roles = memberships.rows.map((r) => r.role_id as string);
-      const permissions = new Set<Permission>(roles.flatMap((r) => ROLE_PERMISSIONS[r] ?? []));
+      const permissions = new Set<Permission>(roles.flatMap((r) => permissionsFor(r, tenant!.access)));
       const profile = await db.query(`SELECT id FROM student_profiles WHERE tenant_id = $1 AND user_id = $2`, [
         tenant.id,
         req.auth!.userId,

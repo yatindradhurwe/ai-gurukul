@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, api, getTenant, isLoggedIn, setTenant, setTokens } from "./api";
-import { realtime } from "./realtime";
+import { realtime, useRealtime } from "./realtime";
 
 const LAST_USER = "ag.uid";
 const lastUser = () => {
@@ -113,6 +113,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // The principal changed role access: pick up this user's new permissions (menus and pages follow).
+  useRealtime("notify", (e) => {
+    if (e.module !== "access" || !getTenant()) return;
+    api<TenantInfo>("/tenants/current").then(setInfo).catch(() => {});
+  });
 
   // Follow sign-ins and sign-outs made in other tabs.
   useEffect(() => {

@@ -55,7 +55,29 @@ async function contacts(req: Request, db: Db) {
   return members.filter((m) => teachers.has(m.id) || (parentCaller && m.roles.some((r) => ["tenant_owner", "tenant_admin", "staff"].includes(r))));
 }
 
-const MESSAGE_COLUMNS = `m.id, m.conversation_id, m.sender_id, u.name AS sender, m.body, m.created_at`;
+/** Largest photo, file or voice note in a chat (the request body limit in app.ts follows it). */
+export const MAX_ATTACHMENT_MB = 10;
+
+/** What can be shared in chat. Never HTML or SVG, which a browser could run as a page. */
+const ATTACHMENT_TYPES: Record<string, "image" | "audio" | "file"> = {
+  "image/png": "image", "image/jpeg": "image", "image/webp": "image", "image/gif": "image",
+  "audio/webm": "audio", "audio/ogg": "audio", "audio/mpeg": "audio", "audio/mp4": "audio", "audio/aac": "audio", "audio/wav": "audio", "audio/x-m4a": "audio",
+  "application/pdf": "file", "text/plain": "file", "text/csv": "file", "application/zip": "file",
+  "application/msword": "file", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "file",
+  "application/vnd.ms-excel": "file", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "file",
+  "application/vnd.ms-powerpoint": "file", "application/vnd.openxmlformats-officedocument.presentationml.presentation": "file",
+};
+
+const MESSAGE_COLUMNS = `m.id, m.conversation_id, m.sender_id, u.name AS sender, m.body, m.created_at, m.reply_to_id,
+  (SELECT json_build_object('id', r.id, 'sender_id', r.sender_id, 'sender', ru.name, 'body', left(r.body, 200),
+          'kind', (SELECT ra.kind FROM message_attachments ra WHERE ra.message_id = r.id LIMIT 1))
+     FROM messages r JOIN users ru ON ru.id = r.sender_id WHERE r.id = m.reply_to_id) AS reply_to,
+  (SELECT json_build_object('id', a.id, 'kind', a.kind, 'file_name', a.file_name, 'mime_type', a.mime_type, 'size_bytes', a.size_bytes, 'duration_ms', a.duration_ms)
+     FROM message_attachments a WHERE a.message_id = m.id LIMIT 1) AS attachment`;
+
+/** Inbox preview text for a message: its text, or what it carries. */
+const PREVIEW_SQL = (alias: string) => `COALESCE(NULLIF(${alias}.body, ''),
+  (SELECT CASE a.kind WHEN 'image' THEN '📷 Photo' WHEN 'audio' THEN '🎤 Voice note' ELSE '📎 ' || a.file_name END FROM message_attachments a WHERE a.message_id = ${alias}.id LIMIT 1), '')`;
 
 /** Push a saved message to every member's open tabs (their own other tabs included). */
 async function pushMessage(db: Db, tenantId: string, conversationId: string, messageId: string) {
@@ -111,7 +133,7 @@ messagesRouter.get(
         `SELECT c.id, c.subject, c.last_message_at, c.student_id, su.name AS student,
                 (SELECT json_agg(json_build_object('id', u.id, 'name', u.name) ORDER BY u.name) FROM conversation_members om JOIN users u ON u.id = om.user_id
                   WHERE om.conversation_id = c.id AND om.user_id <> $1) AS others,
-                (SELECT body FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_body,
+                (SELECT ${PREVIEW_SQL("m")} FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_body,
                 (SELECT sender_id = $1 FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_mine,
                 (SELECT min(om.last_read_at) FROM conversation_members om WHERE om.conversation_id = c.id AND om.user_id <> $1) AS others_read_at,
                 (SELECT min(om.last_delivered_at) FROM conversation_members om WHERE om.conversation_id = c.id AND om.user_id <> $1) AS others_delivered_at,
@@ -201,16 +223,70 @@ messagesRouter.post(
   asyncHandler(async (req, res) => {
     const tenant = requireTenant(req);
     const { userId } = requireAuth(req);
-    const b = parse(z.object({ body: z.string().trim().min(1).max(5000) }), req.body);
+    const b = parse(
+      z
+        .object({
+          body: z.string().trim().max(5000).default(""),
+          replyToId: z.string().uuid().nullish(),
+          attachment: z
+            .object({ fileName: z.string().trim().min(1).max(200), mimeType: z.string().trim().max(120), data: z.string().min(1), durationMs: z.number().int().min(0).max(3_600_000).nullish() })
+            .nullish(),
+        })
+        .refine((x) => x.body || x.attachment, "Write a message or attach something"),
+      req.body,
+    );
+    // Browsers report recordings as e.g. "audio/webm;codecs=opus".
+    const mime = b.attachment?.mimeType.split(";")[0].trim().toLowerCase() ?? "";
+    const kind = b.attachment ? ATTACHMENT_TYPES[mime] : undefined;
+    if (b.attachment && !kind) throw badRequest("Share a photo, a voice note, or a PDF, Word, Excel, PowerPoint, text or zip file");
+    const content = b.attachment ? Buffer.from(b.attachment.data, "base64") : null;
+    if (content && !content.length) throw badRequest("The file is empty");
+    if (content && content.length > MAX_ATTACHMENT_MB * 1024 * 1024) throw badRequest(`Files can be at most ${MAX_ATTACHMENT_MB} MB`);
     const row = await withTenant(tenant.id, async (db) => {
       const c = await loadConversation(req, db, req.params.id);
-      const m = (await db.query(`INSERT INTO messages (tenant_id, conversation_id, sender_id, body) VALUES ($1,$2,$3,$4) RETURNING *`, [tenant.id, c.id, userId, b.body])).rows[0];
+      if (b.replyToId && !(await db.query(`SELECT 1 FROM messages WHERE id = $1 AND conversation_id = $2`, [b.replyToId, c.id])).rowCount) throw badRequest("You can only reply to a message in this chat");
+      const m = (
+        await db.query(`INSERT INTO messages (tenant_id, conversation_id, sender_id, body, reply_to_id) VALUES ($1,$2,$3,$4,$5) RETURNING id`, [tenant.id, c.id, userId, b.body, b.replyToId ?? null])
+      ).rows[0];
+      if (b.attachment && content && kind) {
+        await db.query(
+          `INSERT INTO message_attachments (tenant_id, message_id, kind, file_name, mime_type, size_bytes, duration_ms, content) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [tenant.id, m.id, kind, b.attachment.fileName, mime, content.length, kind === "audio" ? (b.attachment.durationMs ?? null) : null, content],
+        );
+      }
       await db.query(`UPDATE conversations SET last_message_at = now() WHERE id = $1`, [c.id]);
       await db.query(`UPDATE conversation_members SET last_read_at = now(), last_delivered_at = now() WHERE conversation_id = $1 AND user_id = $2`, [c.id, userId]);
       await pushMessage(db, tenant.id, c.id, m.id);
-      return m;
+      return (await db.query(`SELECT ${MESSAGE_COLUMNS} FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = $1`, [m.id])).rows[0];
     });
     res.status(201).json({ message: row });
+  }),
+);
+
+/** A photo, file or voice note, for members of its conversation only. `?download=1` saves it. */
+messagesRouter.get(
+  "/attachments/:id",
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const { userId } = requireAuth(req);
+    const a = await withTenant(tenant.id, async (db) => {
+      const row = (
+        await db.query(
+          `SELECT a.file_name, a.mime_type, a.content FROM message_attachments a JOIN messages m ON m.id = a.message_id
+             JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $2 WHERE a.id = $1`,
+          [req.params.id, userId],
+        )
+      ).rows[0];
+      if (!row) throw notFound("Attachment");
+      return row;
+    });
+    const name = String(a.file_name).replace(/["\\\r\n]/g, "_");
+    res.setHeader("Content-Type", a.mime_type);
+    res.setHeader("Content-Length", String(a.content.length));
+    res.setHeader("Content-Disposition", `${req.query.download ? "attachment" : "inline"}; filename="${name}"; filename*=UTF-8''${encodeURIComponent(a.file_name)}`);
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.end(a.content);
   }),
 );
 

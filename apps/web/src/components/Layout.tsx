@@ -93,6 +93,7 @@ export const NAV: NavGroup[] = [
       { to: "/id-cards", label: "ID cards", icon: "file", hint: "Cards and certificates", show: (can) => can("admissions.manage") || can("members.manage") },
       { to: "/staff", label: "Staff & payroll", icon: "card", hint: "HR records and payslips", show: (can) => can("payroll.manage") },
       { to: "/content", label: "Content", icon: "folder", hint: "Course material", show: (can) => can("content.manage") || can("content.review") },
+      { to: "/access", label: "Access & roles", icon: "shield", hint: "What each role can use", show: (can) => can("tenant.manage") },
       { to: "/people", label: "People", icon: "users", hint: "Members and invitations", show: (can) => can("members.manage") },
       { to: "/billing", label: "Subscription", icon: "sliders", hint: "Plan and billing", show: (can) => can("tenant.billing") },
       { to: "/platform", label: "Platform admin", icon: "shield", hint: "All organisations", show: (_can, platformAdmin) => platformAdmin },

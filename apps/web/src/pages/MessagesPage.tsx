@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "../components/icons";
 import { Avatar, Empty, ErrorNote, Field, Modal, Spinner } from "../components/ui";
-import { api } from "../lib/api";
+import { api, apiBlob } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { realtime, useRealtime, useRealtimeStatus } from "../lib/realtime";
 import { useApi } from "../lib/useApi";
@@ -260,6 +260,15 @@ function InboxRow({ c, active, typing }: { c: any; active: boolean; typing: stri
 // ---------------------------------------------------------------------------
 // A conversation
 // ---------------------------------------------------------------------------
+interface Attachment {
+  id: string;
+  kind: "image" | "audio" | "file";
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+  duration_ms: number | null;
+  localUrl?: string;
+}
 interface Msg {
   id: string;
   sender_id: string;
@@ -267,7 +276,172 @@ interface Msg {
   body: string | null;
   created_at: string;
   mine: boolean;
+  reply_to?: { id: string; sender_id: string; sender: string; body: string | null; kind: string | null } | null;
+  attachment?: Attachment | null;
   local?: "pending" | "failed";
+}
+interface Outgoing {
+  body: string;
+  replyToId: string | null;
+  attachment: { fileName: string; mimeType: string; data: string; durationMs?: number } | null;
+}
+
+const MAX_MB = 10;
+const fileSize = (b: number) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+const duration = (ms: number) => {
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+const toBase64 = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1] ?? "");
+    r.onerror = () => reject(new Error("Could not read the file"));
+    r.readAsDataURL(blob);
+  });
+const replyPreview = (r: { body: string | null; kind: string | null }) =>
+  r.body || (r.kind === "image" ? "📷 Photo" : r.kind === "audio" ? "🎤 Voice note" : r.kind === "file" ? "📎 File" : "");
+
+// Downloaded attachments are kept for the session so scrolling doesn't refetch them.
+const blobCache = new Map<string, Promise<string>>();
+function useAttachmentUrl(a: Attachment | null | undefined, enabled = true) {
+  const [url, setUrl] = useState<string | null>(a?.localUrl ?? null);
+  useEffect(() => {
+    if (!a || a.localUrl || !enabled || a.id.startsWith("local-")) return;
+    let live = true;
+    if (!blobCache.has(a.id)) blobCache.set(a.id, apiBlob(`/messages/attachments/${a.id}`).then((b) => URL.createObjectURL(b)));
+    blobCache
+      .get(a.id)!
+      .then((u) => live && setUrl(u))
+      .catch(() => blobCache.delete(a.id));
+    return () => {
+      live = false;
+    };
+  }, [a, enabled]);
+  return url;
+}
+
+function ImageAttachment({ a, onOpen }: { a: Attachment; onOpen: (url: string) => void }) {
+  const url = useAttachmentUrl(a);
+  return (
+    <button type="button" className="mb-1 block overflow-hidden rounded-xl bg-slate-200/60" onClick={() => url && onOpen(url)} aria-label={`Open ${a.file_name}`}>
+      {url ? <img src={url} alt={a.file_name} className="max-h-72 w-full max-w-xs object-cover" /> : <div className="flex h-40 w-56 items-center justify-center text-slate-400"><Spinner /></div>}
+    </button>
+  );
+}
+
+function VoiceNote({ a, mine }: { a: Attachment; mine: boolean }) {
+  const [want, setWant] = useState(false);
+  const url = useAttachmentUrl(a, want);
+  const audio = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [pos, setPos] = useState(0);
+  const total = (a.duration_ms ?? 0) / 1000;
+  useEffect(() => {
+    if (url && want && audio.current && audio.current.paused) audio.current.play().catch(() => {});
+  }, [url, want]);
+  const toggle = () => {
+    if (!url) return setWant(true);
+    const el = audio.current!;
+    el.paused ? el.play().catch(() => {}) : el.pause();
+  };
+  const length = audio.current?.duration && Number.isFinite(audio.current.duration) ? audio.current.duration : total;
+  return (
+    <div className="mb-1 flex w-60 items-center gap-2.5">
+      <button type="button" onClick={toggle} className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${mine ? "bg-emerald-600 text-white" : "bg-brand text-white"}`} aria-label={playing ? "Pause" : "Play voice note"}>
+        {want && !url ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : <Icon name={playing ? "pause" : "play"} size={16} />}
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className="h-1.5 overflow-hidden rounded-full bg-slate-300/70">
+          <div className={`h-full ${mine ? "bg-emerald-600" : "bg-brand"}`} style={{ width: `${length ? Math.min(100, (pos / length) * 100) : 0}%` }} />
+        </div>
+        <p className="mt-1 text-[10px] text-slate-500">{duration((playing || pos ? pos : length) * 1000)}</p>
+      </div>
+      <Icon name="mic" size={14} className="shrink-0 text-slate-400" />
+      {url && (
+        <audio
+          ref={audio}
+          src={url}
+          preload="metadata"
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onEnded={() => (setPlaying(false), setPos(0))}
+          onTimeUpdate={(e) => setPos(e.currentTarget.currentTime)}
+        />
+      )}
+    </div>
+  );
+}
+
+function FileAttachment({ a }: { a: Attachment }) {
+  const [busy, setBusy] = useState(false);
+  const open = async () => {
+    setBusy(true);
+    try {
+      const blob = await apiBlob(`/messages/attachments/${a.id}`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = a.file_name;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const ext = a.file_name.split(".").pop()?.toUpperCase().slice(0, 4) ?? "FILE";
+  return (
+    <button type="button" onClick={open} disabled={a.id.startsWith("local-")} className="mb-1 flex w-64 max-w-full items-center gap-3 rounded-xl bg-black/5 p-2.5 text-left transition hover:bg-black/10">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-[10px] font-bold text-brand shadow-sm">{ext}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium text-slate-900">{a.file_name}</span>
+        <span className="block text-[11px] text-slate-500">{fileSize(a.size_bytes)}</span>
+      </span>
+      {busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" /> : <Icon name="arrowRight" size={16} className="rotate-90 text-slate-500" />}
+    </button>
+  );
+}
+
+/** Record a voice note with the microphone; resolves with the recording, or null if cancelled. */
+function useRecorder() {
+  const [recording, setRecording] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const rec = useRef<{ mr: MediaRecorder; chunks: Blob[]; started: number; stream: MediaStream; done?: (r: { blob: Blob; ms: number } | null) => void; cancel?: boolean } | null>(null);
+  const tick = useRef<number>();
+  const start = async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const type = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4", "audio/webm"].find((t) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(t));
+    const mr = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+    const r = { mr, chunks: [] as Blob[], started: Date.now(), stream } as NonNullable<typeof rec.current>;
+    mr.ondataavailable = (e) => e.data.size && r.chunks.push(e.data);
+    mr.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      window.clearInterval(tick.current);
+      setRecording(false);
+      r.done?.(r.cancel || !r.chunks.length ? null : { blob: new Blob(r.chunks, { type: mr.mimeType || type || "audio/webm" }), ms: Date.now() - r.started });
+    };
+    rec.current = r;
+    mr.start(250);
+    setElapsed(0);
+    setRecording(true);
+    tick.current = window.setInterval(() => setElapsed(Date.now() - r.started), 200);
+  };
+  const stop = (cancel = false) =>
+    new Promise<{ blob: Blob; ms: number } | null>((resolve) => {
+      const r = rec.current;
+      if (!r) return resolve(null);
+      r.cancel = cancel;
+      r.done = resolve;
+      r.mr.stop();
+      rec.current = null;
+    });
+  useEffect(
+    () => () => {
+      if (rec.current?.mr.state === "recording") rec.current.mr.stop();
+    },
+    [],
+  );
+  return { recording, elapsed, start, stop };
 }
 
 function Thread({ id, typing, onRead }: { id: string; typing: string[]; onRead: () => void }) {
@@ -276,10 +450,16 @@ function Thread({ id, typing, onRead }: { id: string; typing: string[]; onRead: 
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [members, setMembers] = useState<any[]>([]);
   const [body, setBody] = useState("");
+  const [replyTo, setReplyTo] = useState<Msg | null>(null);
+  const [viewer, setViewer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
   const lastTyping = useRef(0);
   const atBottom = useRef(true);
+  const outgoing = useRef(new Map<string, Outgoing>());
+  const recorder = useRecorder();
 
   useEffect(() => {
     if (!thread.data) return;
@@ -314,10 +494,15 @@ function Thread({ id, typing, onRead }: { id: string; typing: string[]; onRead: 
     setMsgs((list) => {
       if (list.some((m) => m.id === e.message.id)) return list;
       const mine = e.message.sender_id === user?.id;
-      // Our own message coming back: replace the optimistic copy.
-      const pending = mine ? list.findIndex((m) => m.local === "pending" && m.body === e.message.body) : -1;
       const next = { ...e.message, mine } as Msg;
-      if (pending >= 0) return list.map((m, i) => (i === pending ? next : m));
+      // Our own message coming back over the socket: replace the optimistic copy.
+      const pending = mine
+        ? list.findIndex((m) => m.local === "pending" && (m.body ?? "") === (next.body ?? "") && (m.attachment?.file_name ?? null) === (next.attachment?.file_name ?? null))
+        : -1;
+      if (pending >= 0) {
+        outgoing.current.delete(list[pending].id);
+        return list.map((m, i) => (i === pending ? next : m));
+      }
       return [...list, next];
     });
     if (e.message.sender_id !== user?.id) {
@@ -341,13 +526,16 @@ function Thread({ id, typing, onRead }: { id: string; typing: string[]; onRead: 
     return "sent";
   };
 
-  async function deliver(text: string, tempId: string) {
+  async function deliver(tempId: string) {
+    const out = outgoing.current.get(tempId);
+    if (!out) return;
     try {
-      const r = await api(`/messages/conversations/${id}`, { body: { body: text } });
+      const r = await api(`/messages/conversations/${id}`, { body: out });
+      outgoing.current.delete(tempId);
       setMsgs((list) => {
-        const real = { ...r.message, sender: user?.name ?? "", mine: true } as Msg;
+        const real = { ...r.message, mine: true } as Msg;
         if (list.some((m) => m.id === real.id)) return list.filter((m) => m.id !== tempId);
-        return list.map((m) => (m.id === tempId ? real : m));
+        return list.map((m) => (m.id === tempId ? { ...real, attachment: real.attachment && { ...real.attachment, localUrl: m.attachment?.localUrl } } : m));
       });
     } catch (err) {
       setMsgs((list) => list.map((m) => (m.id === tempId ? { ...m, local: "failed" } : m)));
@@ -355,23 +543,63 @@ function Thread({ id, typing, onRead }: { id: string; typing: string[]; onRead: 
     }
   }
 
+  /** Show the message at once, then send it. */
+  function queue(out: Outgoing, preview: Partial<Msg> = {}) {
+    const tempId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    outgoing.current.set(tempId, out);
+    atBottom.current = true;
+    const quoted = replyTo ? { id: replyTo.id, sender_id: replyTo.sender_id, sender: replyTo.sender, body: replyTo.body, kind: replyTo.attachment?.kind ?? null } : null;
+    setMsgs((list) => [...list, { id: tempId, sender_id: user!.id, sender: user!.name, body: out.body, created_at: new Date().toISOString(), mine: true, local: "pending", reply_to: quoted, ...preview }]);
+    setReplyTo(null);
+    setError(null);
+    deliver(tempId);
+  }
+
   function send(e?: FormEvent) {
     e?.preventDefault();
     const text = body.trim();
     if (!text) return;
     setBody("");
-    setError(null);
     realtime.send({ type: "typing", conversationId: id, typing: false });
     lastTyping.current = 0;
-    const tempId = `local-${Date.now()}`;
-    atBottom.current = true;
-    setMsgs((list) => [...list, { id: tempId, sender_id: user!.id, sender: user!.name, body: text, created_at: new Date().toISOString(), mine: true, local: "pending" }]);
-    deliver(text, tempId);
+    queue({ body: text, replyToId: replyTo?.id ?? null, attachment: null });
+  }
+
+  async function attach(file: File) {
+    if (file.size > MAX_MB * 1024 * 1024) return setError(`Files can be at most ${MAX_MB} MB`);
+    const data = await toBase64(file);
+    const kind: Attachment["kind"] = file.type.startsWith("image/") ? "image" : file.type.startsWith("audio/") ? "audio" : "file";
+    const caption = body.trim();
+    setBody("");
+    queue(
+      { body: caption, replyToId: replyTo?.id ?? null, attachment: { fileName: file.name, mimeType: file.type || "application/octet-stream", data } },
+      { attachment: { id: `local-${file.name}`, kind, file_name: file.name, mime_type: file.type, size_bytes: file.size, duration_ms: null, localUrl: kind === "image" ? URL.createObjectURL(file) : undefined } },
+    );
+  }
+
+  async function startVoice() {
+    setError(null);
+    try {
+      await recorder.start();
+    } catch {
+      setError("Allow microphone access in your browser to record a voice note.");
+    }
+  }
+
+  async function finishVoice(cancel: boolean) {
+    const r = await recorder.stop(cancel);
+    if (!r || r.ms < 700) return;
+    const ext = r.blob.type.includes("mp4") ? "m4a" : r.blob.type.includes("ogg") ? "ogg" : "webm";
+    const data = await toBase64(r.blob);
+    queue(
+      { body: "", replyToId: replyTo?.id ?? null, attachment: { fileName: `voice-note.${ext}`, mimeType: r.blob.type, data, durationMs: r.ms } },
+      { attachment: { id: "local-voice", kind: "audio", file_name: `voice-note.${ext}`, mime_type: r.blob.type, size_bytes: r.blob.size, duration_ms: r.ms, localUrl: URL.createObjectURL(r.blob) } },
+    );
   }
 
   function retry(m: Msg) {
     setMsgs((list) => list.map((x) => (x.id === m.id ? { ...x, local: "pending" } : x)));
-    deliver(m.body ?? "", m.id);
+    deliver(m.id);
   }
 
   function onType(v: string) {
@@ -381,6 +609,20 @@ function Thread({ id, typing, onRead }: { id: string; typing: string[]; onRead: 
       lastTyping.current = now;
       realtime.send({ type: "typing", conversationId: id });
     }
+  }
+
+  function jumpTo(messageId: string) {
+    const el = document.getElementById(`msg-${messageId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("ring-2", "ring-amber-400");
+    setTimeout(() => el.classList.remove("ring-2", "ring-amber-400"), 1500);
+  }
+
+  function startReply(m: Msg) {
+    if (m.local) return;
+    setReplyTo(m);
+    input.current?.focus();
   }
 
   const groups = useMemo(() => {
@@ -398,6 +640,7 @@ function Thread({ id, typing, onRead }: { id: string; typing: string[]; onRead: 
   const who = others[0];
   const group = others.length > 1;
   const status = typing.length ? (group ? `${typing.join(", ")} typing…` : "typing…") : group ? others.map((o) => o.name).join(", ") : lastSeen(presence[who?.id]);
+  const nameOf = (senderId: string, sender: string) => (senderId === user?.id ? "You" : sender);
 
   return (
     <>
@@ -411,9 +654,7 @@ function Thread({ id, typing, onRead }: { id: string; typing: string[]; onRead: 
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold text-slate-900">{group ? thread.data.conversation.subject || "Group" : who?.name}</p>
-          <p className={`truncate text-xs ${typing.length || presence[who?.id]?.online ? "font-medium text-emerald-600" : "text-slate-500"}`}>
-            {status || roleOf(who?.roles)}
-          </p>
+          <p className={`truncate text-xs ${typing.length || presence[who?.id]?.online ? "font-medium text-emerald-600" : "text-slate-500"}`}>{status || roleOf(who?.roles)}</p>
         </div>
         <div className="hidden text-right text-xs text-slate-500 sm:block">
           {roleOf(who?.roles)}
@@ -437,15 +678,30 @@ function Thread({ id, typing, onRead }: { id: string; typing: string[]; onRead: 
             {g.items.map((m, i) => {
               const prev = g.items[i - 1];
               const first = !prev || prev.sender_id !== m.sender_id;
+              const a = m.attachment;
               return (
-                <div key={m.id} className={`flex ${m.mine ? "justify-end" : "justify-start"} ${first ? "pt-1.5" : ""}`}>
+                <div key={m.id} className={`group flex items-center gap-1 ${m.mine ? "flex-row-reverse" : ""} ${first ? "pt-1.5" : ""}`} onDoubleClick={() => startReply(m)}>
                   <div
-                    className={`relative max-w-[80%] rounded-2xl px-3 pb-1.5 pt-2 text-sm leading-relaxed shadow-sm sm:max-w-[65%] ${
+                    id={`msg-${m.id}`}
+                    className={`relative max-w-[80%] rounded-2xl px-2.5 pb-1.5 pt-2 text-sm leading-relaxed shadow-sm transition sm:max-w-[65%] ${
                       m.mine ? `bg-[#d9fdd3] text-slate-900 ${first ? "rounded-tr-sm" : ""}` : `bg-white text-slate-800 ${first ? "rounded-tl-sm" : ""}`
                     }`}
                   >
-                    {group && !m.mine && first && <p className="mb-0.5 text-[11px] font-semibold text-brand">{m.sender}</p>}
-                    <span className="whitespace-pre-wrap break-words">{m.body}</span>
+                    {group && !m.mine && first && <p className="mb-0.5 px-0.5 text-[11px] font-semibold text-brand">{m.sender}</p>}
+                    {m.reply_to && (
+                      <button
+                        type="button"
+                        onClick={() => jumpTo(m.reply_to!.id)}
+                        className={`mb-1 block w-full rounded-lg border-l-4 px-2 py-1 text-left text-xs ${m.mine ? "border-emerald-600 bg-emerald-900/5" : "border-brand bg-slate-100"}`}
+                      >
+                        <span className={`block font-semibold ${m.mine ? "text-emerald-700" : "text-brand"}`}>{nameOf(m.reply_to.sender_id, m.reply_to.sender)}</span>
+                        <span className="line-clamp-2 text-slate-600">{replyPreview(m.reply_to)}</span>
+                      </button>
+                    )}
+                    {a?.kind === "image" && <ImageAttachment a={a} onOpen={setViewer} />}
+                    {a?.kind === "audio" && <VoiceNote a={a} mine={m.mine} />}
+                    {a?.kind === "file" && <FileAttachment a={a} />}
+                    {m.body && <span className="whitespace-pre-wrap break-words px-0.5">{m.body}</span>}
                     <span className="float-right ml-3 mt-1.5 inline-flex translate-y-0.5 items-center gap-1 text-[10px] text-slate-500">
                       {clock(m.created_at)}
                       {m.mine && (
@@ -460,6 +716,17 @@ function Thread({ id, typing, onRead }: { id: string; typing: string[]; onRead: 
                       </button>
                     )}
                   </div>
+                  {!m.local && (
+                    <button
+                      type="button"
+                      onClick={() => startReply(m)}
+                      className="rounded-full bg-white/80 p-1.5 text-slate-500 opacity-0 shadow-sm transition hover:text-slate-900 focus:opacity-100 group-hover:opacity-100 max-sm:opacity-60"
+                      aria-label="Reply"
+                      title="Reply"
+                    >
+                      <Icon name="reply" size={14} />
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -476,25 +743,89 @@ function Thread({ id, typing, onRead }: { id: string; typing: string[]; onRead: 
         )}
       </div>
       <ErrorNote message={error} />
-      <form onSubmit={send} className="flex items-end gap-2 border-t border-slate-100 bg-slate-50 p-2.5">
-        <textarea
-          className="input max-h-40 min-h-[2.75rem] resize-none rounded-3xl border-0 bg-white px-4 py-3 shadow-sm"
-          rows={1}
-          placeholder="Type a message"
-          value={body}
-          onChange={(e) => onType(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          aria-label="Message"
-        />
-        <button className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md transition hover:bg-emerald-600 disabled:opacity-40" disabled={!body.trim()} aria-label="Send">
-          <Icon name="send" size={18} />
-        </button>
-      </form>
+      <div className="border-t border-slate-100 bg-slate-50">
+        {replyTo && (
+          <div className="mx-2.5 mt-2.5 flex items-start gap-2 rounded-xl border-l-4 border-brand bg-white px-3 py-2 shadow-sm">
+            <div className="min-w-0 flex-1 text-xs">
+              <p className="font-semibold text-brand">Replying to {nameOf(replyTo.sender_id, replyTo.sender)}</p>
+              <p className="truncate text-slate-600">{replyPreview({ body: replyTo.body, kind: replyTo.attachment?.kind ?? null })}</p>
+            </div>
+            <button type="button" className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" onClick={() => setReplyTo(null)} aria-label="Cancel reply">
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        )}
+        {recorder.recording ? (
+          <div className="flex items-center gap-3 p-2.5">
+            <button type="button" className="rounded-full p-2.5 text-slate-500 hover:bg-slate-200 hover:text-red-600" onClick={() => finishVoice(true)} aria-label="Cancel recording">
+              <Icon name="trash" size={18} />
+            </button>
+            <div className="flex flex-1 items-center gap-2 rounded-3xl bg-white px-4 py-3 shadow-sm">
+              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
+              <span className="text-sm font-medium text-slate-700">Recording {duration(recorder.elapsed)}</span>
+            </div>
+            <button type="button" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md hover:bg-emerald-600" onClick={() => finishVoice(false)} aria-label="Send voice note">
+              <Icon name="send" size={18} />
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={send} className="flex items-end gap-2 p-2.5">
+            <input
+              ref={fileInput}
+              type="file"
+              className="hidden"
+              accept="image/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) attach(f).catch((x) => setError((x as Error).message));
+              }}
+            />
+            <button type="button" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-200 hover:text-slate-800" onClick={() => fileInput.current?.click()} aria-label="Attach a photo or file" title="Photo or file">
+              <Icon name="paperclip" size={19} />
+            </button>
+            <textarea
+              ref={input}
+              className="input max-h-40 min-h-[2.75rem] resize-none rounded-3xl border-0 bg-white px-4 py-3 shadow-sm"
+              rows={1}
+              placeholder="Type a message"
+              value={body}
+              onChange={(e) => onType(e.target.value)}
+              onPaste={(e) => {
+                const f = [...e.clipboardData.files][0];
+                if (f) {
+                  e.preventDefault();
+                  attach(f).catch((x) => setError((x as Error).message));
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                } else if (e.key === "Escape") setReplyTo(null);
+              }}
+              aria-label="Message"
+            />
+            {body.trim() ? (
+              <button className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md transition hover:bg-emerald-600" aria-label="Send">
+                <Icon name="send" size={18} />
+              </button>
+            ) : (
+              <button type="button" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md transition hover:bg-emerald-600" onClick={startVoice} aria-label="Record a voice note" title="Voice note">
+                <Icon name="mic" size={18} />
+              </button>
+            )}
+          </form>
+        )}
+      </div>
+      {viewer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4" onClick={() => setViewer(null)}>
+          <img src={viewer} alt="" className="max-h-full max-w-full rounded-xl shadow-2xl" />
+          <button className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20" aria-label="Close">
+            <Icon name="x" />
+          </button>
+        </div>
+      )}
     </>
   );
 }

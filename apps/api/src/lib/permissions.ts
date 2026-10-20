@@ -77,3 +77,52 @@ export const ROLE_NAMES: Record<string, string> = {
   parent: "Parent / guardian",
   student: "Student",
 };
+
+/**
+ * Permissions a principal may switch on or off per role, grouped by module.
+ * Left out: tenant.manage (the owner's alone), and permissions tied to being a
+ * student or parent (assessments.take, planner.self, reports.self,
+ * reports.children, classes.attend), which only make sense for those accounts.
+ */
+export const EDITABLE_PERMISSIONS: { id: Permission; module: string; label: string; hint: string }[] = [
+  { id: "members.manage", module: "People & office", label: "People & invitations", hint: "Invite members, change roles" },
+  { id: "directory.manage", module: "People & office", label: "School directory", hint: "All staff and students, profiles, documents, promotions" },
+  { id: "admissions.manage", module: "People & office", label: "Admissions & ID cards", hint: "Enquiries, admitting students, certificates" },
+  { id: "payroll.manage", module: "People & office", label: "Staff HR & payroll", hint: "Staff records, attendance, payslips" },
+  { id: "leave.approve", module: "People & office", label: "Approve leave", hint: "Student, staff leave and out-passes" },
+  { id: "academics.manage", module: "Academics", label: "Academic setup", hint: "Years, holidays, syllabi, class subjects" },
+  { id: "exams.manage", module: "Academics", label: "Exams", hint: "Date sheets, papers, declaring results" },
+  { id: "reports.class", module: "Academics", label: "Class reports", hint: "Report cards and class results" },
+  { id: "reports.tenant", module: "Academics", label: "School-wide reports", hint: "Dashboards across the school" },
+  { id: "planner.manage_students", module: "Academics", label: "Students' study plans", hint: "View and adjust plans" },
+  { id: "classes.manage", module: "Classroom", label: "Teach classes", hint: "Attendance, gradebook, assignments, live classes" },
+  { id: "announcements.manage", module: "Classroom", label: "Post announcements", hint: "School and class notices" },
+  { id: "assessments.manage", module: "Classroom", label: "Create tests", hint: "Quizzes and question banks" },
+  { id: "assessments.review", module: "Classroom", label: "Review answers", hint: "Mark written answers" },
+  { id: "curriculum.read", module: "Learning", label: "Courses", hint: "Read chapters and lessons" },
+  { id: "tutor.use", module: "Learning", label: "AI teacher", hint: "Ask the AI teacher" },
+  { id: "content.manage", module: "Learning", label: "Manage content", hint: "Upload and edit course material" },
+  { id: "content.review", module: "Learning", label: "Approve content", hint: "Review material before students see it" },
+  { id: "fees.manage", module: "Campus", label: "Fees", hint: "Fee structures, collections, receipts" },
+  { id: "library.manage", module: "Campus", label: "Library", hint: "Catalogue, issue and return" },
+  { id: "transport.manage", module: "Campus", label: "Transport", hint: "Buses, routes and riders" },
+  { id: "hostel.manage", module: "Campus", label: "Hostel", hint: "Rooms, beds and residents" },
+  { id: "usage.read", module: "Organisation", label: "Usage", hint: "AI and platform usage" },
+  { id: "tenant.billing", module: "Organisation", label: "Subscription", hint: "Plan and billing" },
+];
+
+/** Roles whose access can't be changed: the owner always keeps everything (no lock-outs). */
+export const LOCKED_ROLES = ["tenant_owner"];
+
+export type AccessOverrides = Record<string, { grant?: string[]; revoke?: string[] }>;
+
+const editable = new Set<string>(EDITABLE_PERMISSIONS.map((p) => p.id));
+
+/** A role's permissions in one organization: the defaults, plus the principal's grants, minus revocations. */
+export function permissionsFor(role: string, overrides: AccessOverrides | null | undefined): Permission[] {
+  const base = new Set<Permission>(ROLE_PERMISSIONS[role] ?? []);
+  const o = LOCKED_ROLES.includes(role) ? undefined : overrides?.[role];
+  for (const p of o?.grant ?? []) if (editable.has(p)) base.add(p as Permission);
+  for (const p of o?.revoke ?? []) if (editable.has(p)) base.delete(p as Permission);
+  return [...base];
+}

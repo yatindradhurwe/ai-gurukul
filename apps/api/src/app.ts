@@ -34,11 +34,12 @@ import { directoryRouter, MAX_UPLOAD_MB } from "./modules/school/directory.js";
 import { engagementRouter } from "./modules/school/engagement.js";
 import { hrRouter } from "./modules/school/hr.js";
 import { eventsRouter, leaveRouter } from "./modules/school/leave.js";
-import { messagesRouter, ptmRouter } from "./modules/school/messaging.js";
+import { MAX_ATTACHMENT_MB, messagesRouter, ptmRouter } from "./modules/school/messaging.js";
 import { hostelRouter } from "./modules/school/hostel.js";
 import { libraryRouter } from "./modules/school/library.js";
 import { transportRouter } from "./modules/school/transport.js";
 import { parentsRouter } from "./modules/parents/routes.js";
+import { accessRouter } from "./modules/tenants/access.js";
 import { tenantsRouter } from "./modules/tenants/routes.js";
 import { usageRouter } from "./modules/usage/routes.js";
 import "./types.js";
@@ -54,6 +55,7 @@ export function createApp() {
   app.use("/api/v1/billing/webhooks", billingWebhookRouter);
   // Document uploads arrive as base64 JSON (about 4/3 of the file size).
   app.use("/api/v1/directory/documents", express.json({ limit: `${Math.ceil(MAX_UPLOAD_MB * 1.4)}mb` }));
+  app.use("/api/v1/messages/conversations", express.json({ limit: `${Math.ceil(MAX_ATTACHMENT_MB * 1.4)}mb` }));
   app.use(express.json({ limit: "1mb" }));
   app.use(authenticate);
   app.use("/api/v1", rateLimit({ name: "api", windowMs: 60_000, max: 300 }));
@@ -101,6 +103,7 @@ export function createApp() {
   app.use("/api/v1/hr", tenantScoped, hrRouter);
   app.use("/api/v1/academics", tenantScoped, academicsRouter);
   app.use("/api/v1/directory", tenantScoped, directoryRouter);
+  app.use("/api/v1/access", tenantScoped, accessRouter);
   // Public (no sign-in): a school's online admission form.
   app.use("/api/v1/public/admissions", publicAdmissionsRouter);
 
