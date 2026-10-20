@@ -6,6 +6,7 @@ import { badRequest, conflict, forbidden, notFound } from "../../lib/errors.js";
 import { asyncHandler, parse, requireAuth, requireTenant } from "../../lib/http.js";
 import { STAFF_ROLES } from "../../lib/permissions.js";
 import { requirePermission } from "../../middleware/authorization.js";
+import { chatHub, publish } from "../../realtime/hub.js";
 
 export const messagesRouter = Router();
 export const ptmRouter = Router();
@@ -54,6 +55,27 @@ async function contacts(req: Request, db: Db) {
   return members.filter((m) => teachers.has(m.id) || (parentCaller && m.roles.some((r) => ["tenant_owner", "tenant_admin", "staff"].includes(r))));
 }
 
+const MESSAGE_COLUMNS = `m.id, m.conversation_id, m.sender_id, u.name AS sender, m.body, m.created_at`;
+
+/** Push a saved message to every member's open tabs (their own other tabs included). */
+async function pushMessage(db: Db, tenantId: string, conversationId: string, messageId: string) {
+  const message = (await db.query(`SELECT ${MESSAGE_COLUMNS} FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = $1`, [messageId])).rows[0];
+  const members = (await db.query(`SELECT user_id FROM conversation_members WHERE conversation_id = $1`, [conversationId])).rows.map((r) => r.user_id);
+  await publish(db, tenantId, members, { type: "message", conversationId, message });
+}
+
+/** Mark a conversation read (and so delivered) for the caller and tell the other members. */
+async function markRead(db: Db, tenantId: string, conversationId: string, userId: string) {
+  const r = (
+    await db.query(
+      `UPDATE conversation_members SET last_read_at = now(), last_delivered_at = now() WHERE conversation_id = $1 AND user_id = $2 RETURNING last_read_at, last_delivered_at`,
+      [conversationId, userId],
+    )
+  ).rows[0];
+  const members = (await db.query(`SELECT user_id FROM conversation_members WHERE conversation_id = $1`, [conversationId])).rows.map((x) => x.user_id);
+  if (r) await publish(db, tenantId, members, { type: "receipt", conversationId, userId, readAt: r.last_read_at, deliveredAt: r.last_delivered_at });
+}
+
 async function loadConversation(req: Request, db: Db, id: string) {
   const { userId } = requireAuth(req);
   const c = (await db.query(`SELECT * FROM conversations WHERE id = $1`, [id])).rows[0];
@@ -91,6 +113,8 @@ messagesRouter.get(
                   WHERE om.conversation_id = c.id AND om.user_id <> $1) AS others,
                 (SELECT body FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_body,
                 (SELECT sender_id = $1 FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_mine,
+                (SELECT min(om.last_read_at) FROM conversation_members om WHERE om.conversation_id = c.id AND om.user_id <> $1) AS others_read_at,
+                (SELECT min(om.last_delivered_at) FROM conversation_members om WHERE om.conversation_id = c.id AND om.user_id <> $1) AS others_delivered_at,
                 (SELECT count(*)::int FROM messages m WHERE m.conversation_id = c.id AND m.sender_id <> $1 AND m.created_at > me.last_read_at) AS unread
            FROM conversations c JOIN conversation_members me ON me.conversation_id = c.id AND me.user_id = $1
            LEFT JOIN student_profiles sp ON sp.id = c.student_id LEFT JOIN users su ON su.id = sp.user_id
@@ -133,9 +157,10 @@ messagesRouter.post(
       if (!existing) {
         await db.query(`INSERT INTO conversation_members (tenant_id, conversation_id, user_id) VALUES ($1,$2,$3), ($1,$2,$4)`, [tenant.id, cid, userId, b.recipientId]);
       }
-      await db.query(`INSERT INTO messages (tenant_id, conversation_id, sender_id, body) VALUES ($1,$2,$3,$4)`, [tenant.id, cid, userId, b.body]);
+      const m = (await db.query(`INSERT INTO messages (tenant_id, conversation_id, sender_id, body) VALUES ($1,$2,$3,$4) RETURNING id`, [tenant.id, cid, userId, b.body])).rows[0];
       await db.query(`UPDATE conversations SET last_message_at = now() WHERE id = $1`, [cid]);
-      await db.query(`UPDATE conversation_members SET last_read_at = now() WHERE conversation_id = $1 AND user_id = $2`, [cid, userId]);
+      await db.query(`UPDATE conversation_members SET last_read_at = now(), last_delivered_at = now() WHERE conversation_id = $1 AND user_id = $2`, [cid, userId]);
+      await pushMessage(db, tenant.id, cid, m.id);
       return cid;
     });
     res.status(201).json({ conversationId: id });
@@ -151,17 +176,19 @@ messagesRouter.get(
       const c = await loadConversation(req, db, req.params.id);
       const members = (
         await db.query(
-          `SELECT u.id, u.name, array_agg(DISTINCT tm.role_id) AS roles FROM conversation_members m JOIN users u ON u.id = m.user_id
-             LEFT JOIN tenant_memberships tm ON tm.user_id = u.id AND tm.tenant_id = $2 WHERE m.conversation_id = $1 GROUP BY u.id`,
+          `SELECT u.id, u.name, array_agg(DISTINCT tm.role_id) AS roles, m.last_read_at, m.last_delivered_at, u.last_seen_at
+             FROM conversation_members m JOIN users u ON u.id = m.user_id
+             LEFT JOIN tenant_memberships tm ON tm.user_id = u.id AND tm.tenant_id = $2 WHERE m.conversation_id = $1 GROUP BY u.id, m.last_read_at, m.last_delivered_at`,
           [c.id, tenant.id],
         )
-      ).rows;
+      ).rows.map((m) => ({ ...m, online: chatHub.isOnline(tenant.id, m.id) }));
+      // The latest 500 messages, oldest first.
       const msgs = await db.query(
-        `SELECT m.id, m.sender_id, u.name AS sender, m.body, m.created_at, m.sender_id = $2 AS mine
-           FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = $1 ORDER BY m.created_at LIMIT 500`,
+        `SELECT * FROM (SELECT ${MESSAGE_COLUMNS}, m.sender_id = $2 AS mine
+           FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = $1 ORDER BY m.created_at DESC LIMIT 500) x ORDER BY created_at`,
         [c.id, userId],
       );
-      await db.query(`UPDATE conversation_members SET last_read_at = now() WHERE conversation_id = $1 AND user_id = $2`, [c.id, userId]);
+      await markRead(db, tenant.id, c.id, userId);
       const student = c.student_id ? (await db.query(`SELECT u.name FROM student_profiles sp JOIN users u ON u.id = sp.user_id WHERE sp.id = $1`, [c.student_id])).rows[0]?.name : null;
       return { conversation: { ...c, student }, members, messages: msgs.rows };
     });
@@ -179,10 +206,25 @@ messagesRouter.post(
       const c = await loadConversation(req, db, req.params.id);
       const m = (await db.query(`INSERT INTO messages (tenant_id, conversation_id, sender_id, body) VALUES ($1,$2,$3,$4) RETURNING *`, [tenant.id, c.id, userId, b.body])).rows[0];
       await db.query(`UPDATE conversations SET last_message_at = now() WHERE id = $1`, [c.id]);
-      await db.query(`UPDATE conversation_members SET last_read_at = now() WHERE conversation_id = $1 AND user_id = $2`, [c.id, userId]);
+      await db.query(`UPDATE conversation_members SET last_read_at = now(), last_delivered_at = now() WHERE conversation_id = $1 AND user_id = $2`, [c.id, userId]);
+      await pushMessage(db, tenant.id, c.id, m.id);
       return m;
     });
     res.status(201).json({ message: row });
+  }),
+);
+
+/** The thread is open and a new message arrived: mark it read so the sender sees blue ticks. */
+messagesRouter.post(
+  "/conversations/:id/read",
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const { userId } = requireAuth(req);
+    await withTenant(tenant.id, async (db) => {
+      const c = await loadConversation(req, db, req.params.id);
+      await markRead(db, tenant.id, c.id, userId);
+    });
+    res.json({ ok: true });
   }),
 );
 

@@ -4,6 +4,7 @@ import { audit, withTenant } from "../../database/pool.js";
 import { forbidden, notFound } from "../../lib/errors.js";
 import { asyncHandler, parse, requireAuth, requireTenant } from "../../lib/http.js";
 import { requirePermission } from "../../middleware/authorization.js";
+import { publish } from "../../realtime/hub.js";
 import { isOrgAdmin, loadClass, visibleClassesSql } from "./access.js";
 
 export const announcementsRouter = Router();
@@ -71,6 +72,8 @@ announcementsRouter.post(
         )
       ).rows[0];
       await db.query(`INSERT INTO announcement_reads (tenant_id, announcement_id, user_id) VALUES ($1,$2,$3)`, [tenant.id, a.id, userId]);
+      // Bells update live; each client re-reads the list, which applies audience and class rules.
+      await publish(db, tenant.id, "all", { type: "notify", module: "announcements" });
       await audit(db, { tenantId: tenant.id, actorId: userId, action: "announcement.create", resourceType: "announcement", resourceId: a.id });
       return a;
     });

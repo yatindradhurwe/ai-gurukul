@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
+import { useRealtime } from "../lib/realtime";
 import { useApi } from "../lib/useApi";
 import { Icon, type IconName } from "./icons";
 import { Avatar } from "./ui";
@@ -311,6 +312,12 @@ function UserMenu() {
   );
 }
 
+/** The browser tab shows the page name, prefixed with unread messages like "(3) Messages · AI Gurukul". */
+const tabTitle = { page: "AI Gurukul", unread: 0 };
+const renderTitle = () => {
+  document.title = tabTitle.unread ? `(${tabTitle.unread > 99 ? "99+" : tabTitle.unread}) ${tabTitle.page}` : tabTitle.page;
+};
+
 function MessagesIcon() {
   const { tenant } = useAuth();
   const { pathname } = useLocation();
@@ -319,7 +326,15 @@ function MessagesIcon() {
   useEffect(() => {
     reload();
   }, [pathname, reload]);
+  // New messages and read receipts arrive over the live connection.
+  useRealtime("message", reload);
+  useRealtime("receipt", reload);
+  useRealtime("ready", reload);
   const unread = inbox.data?.unread ?? 0;
+  useEffect(() => {
+    tabTitle.unread = unread;
+    renderTitle();
+  }, [unread]);
   return (
     <Link to="/messages" className="relative rounded-full bg-white p-2.5 text-slate-600 shadow-sm ring-1 ring-slate-200 transition hover:text-slate-900 hover:shadow-md" aria-label={`Messages${unread ? `, ${unread} unread` : ""}`}>
       <Icon name="send" size={18} />
@@ -338,6 +353,7 @@ function Bell() {
   useEffect(() => {
     reload();
   }, [pathname, reload]);
+  useRealtime("notify", (e) => e.module === "announcements" && reload());
   const unread = feed.data?.unread ?? 0;
   return (
     <Link to="/announcements" className="relative rounded-full bg-white p-2.5 text-slate-600 shadow-sm ring-1 ring-slate-200 transition hover:text-slate-900 hover:shadow-md" aria-label={`Announcements${unread ? `, ${unread} unread` : ""}`}>
@@ -397,7 +413,8 @@ export function Layout() {
   const title = usePageTitle();
   useEffect(() => setMenu(false), [pathname]);
   useEffect(() => {
-    document.title = `${title} · AI Gurukul`;
+    tabTitle.page = `${title} · AI Gurukul`;
+    renderTitle();
   }, [title]);
 
   return (

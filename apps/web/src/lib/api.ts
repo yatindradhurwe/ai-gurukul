@@ -1,11 +1,45 @@
 // Thin API client: bearer access token + rotating refresh token, tenant header.
-// Tokens live in memory + localStorage for the MVP; move the refresh token to
-// an httpOnly cookie when the web app is served from the API's domain.
+// Tokens live in localStorage for the MVP; move the refresh token to an
+// httpOnly cookie when the web app is served from the API's domain.
+//
+// Every tab shares the stored tokens. Refresh tokens are single-use and the
+// server revokes the whole session if one is replayed, so tabs always read the
+// latest tokens from storage and refresh one at a time (Web Locks).
 
 const BASE = "/api/v1";
-let accessToken: string | null = localStorage.getItem("ag.access");
-let refreshToken: string | null = localStorage.getItem("ag.refresh");
-let tenantId: string | null = localStorage.getItem("ag.tenant");
+const store = {
+  get: (k: string) => {
+    try {
+      return localStorage.getItem(k);
+    } catch {
+      return null;
+    }
+  },
+  set: (k: string, v: string | null) => {
+    try {
+      v ? localStorage.setItem(k, v) : localStorage.removeItem(k);
+    } catch {
+      /* private mode: keep the in-memory copy */
+    }
+  },
+};
+let memAccess: string | null = store.get("ag.access");
+let memRefresh: string | null = store.get("ag.refresh");
+// The selected organization is per tab, so two tabs can work in different schools.
+let tenantId: string | null = store.get("ag.tenant");
+// Storage is the source of truth (a sign-out in another tab signs this one out too);
+// memory is only a fallback where storage is blocked.
+const storageWorks = (() => {
+  try {
+    localStorage.setItem("ag.probe", "1");
+    localStorage.removeItem("ag.probe");
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const access = () => (storageWorks ? store.get("ag.access") : memAccess);
+const refresh = () => (storageWorks ? store.get("ag.refresh") : memRefresh);
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public details?: unknown) {
@@ -14,50 +48,59 @@ export class ApiError extends Error {
 }
 
 export function setTokens(a: string | null, r: string | null) {
-  accessToken = a;
-  refreshToken = r;
-  a ? localStorage.setItem("ag.access", a) : localStorage.removeItem("ag.access");
-  r ? localStorage.setItem("ag.refresh", r) : localStorage.removeItem("ag.refresh");
+  memAccess = a;
+  memRefresh = r;
+  store.set("ag.access", a);
+  store.set("ag.refresh", r);
 }
 
 export function setTenant(id: string | null) {
   tenantId = id;
-  id ? localStorage.setItem("ag.tenant", id) : localStorage.removeItem("ag.tenant");
+  store.set("ag.tenant", id);
 }
 
 export const getTenant = () => tenantId;
-export const isLoggedIn = () => !!accessToken;
+export const getAccessToken = () => access();
+export const isLoggedIn = () => !!access();
 
 /** Headers for raw fetch calls (e.g. streaming) that bypass api(). */
 export function authHeaders(): Record<string, string> {
   const h: Record<string, string> = {};
-  if (accessToken) h.Authorization = `Bearer ${accessToken}`;
+  const a = access();
+  if (a) h.Authorization = `Bearer ${a}`;
   if (tenantId) h["X-Tenant-Id"] = tenantId;
   return h;
 }
 
+async function refreshOnce(staleAccess: string | null): Promise<boolean> {
+  // Another tab may have refreshed while we waited: use its tokens.
+  const current = access();
+  if (current && current !== staleAccess) return true;
+  const token = refresh();
+  if (!token) return false;
+  const r = await fetch(`${BASE}/auth/refresh`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refreshToken: token }) });
+  if (!r.ok) {
+    // Lost a race with a tab that has no lock support; its tokens are fine to use.
+    const now = access();
+    return !!now && now !== staleAccess;
+  }
+  const body = await r.json();
+  setTokens(body.accessToken, body.refreshToken);
+  return true;
+}
+
 let refreshing: Promise<boolean> | null = null;
+/** Get a fresh access token after a 401. Safe to call from many places and many tabs at once. */
 export async function tryRefresh(): Promise<boolean> {
-  if (!refreshToken) return false;
-  refreshing ??= fetch(`${BASE}/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refreshToken }),
-  })
-    .then(async (r) => {
-      if (!r.ok) return false;
-      const body = await r.json();
-      setTokens(body.accessToken, body.refreshToken);
-      return true;
-    })
-    .finally(() => (refreshing = null));
-  return refreshing;
+  const stale = access();
+  const run: Promise<boolean> =
+    typeof navigator !== "undefined" && navigator.locks ? (navigator.locks.request("ag.refresh", () => refreshOnce(stale)) as unknown as Promise<boolean>) : refreshOnce(stale);
+  const p = (refreshing ??= run.catch(() => false).finally(() => (refreshing = null)));
+  return p;
 }
 
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; retry?: boolean } = {}): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  if (tenantId) headers["X-Tenant-Id"] = tenantId;
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
   const res = await fetch(`${BASE}${path}`, {
     method: opts.method ?? (opts.body ? "POST" : "GET"),
     headers,

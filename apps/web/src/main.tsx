@@ -58,7 +58,7 @@ const FEES = ["fees.manage", "classes.attend", "reports.children"];
 const DIRECTORY = ["directory.manage", "classes.manage"];
 
 function App() {
-  const { user, loading, info } = useAuth();
+  const { user, loading, info, tenant } = useAuth();
   const { pathname } = useLocation();
   // The public admission form works without signing in.
   if (pathname.startsWith("/apply/"))
@@ -70,8 +70,9 @@ function App() {
   if (loading) return <Spinner />;
   if (!user) return <AuthPage />;
   const home = user.is_platform_admin && !info ? <Navigate to="/platform" replace /> : <DashboardPage />;
+  // Re-mount every page when the organization changes so nothing from the previous school stays on screen.
   return (
-    <Routes>
+    <Routes key={tenant?.tenant_id ?? "none"}>
       <Route element={<Layout />}>
         <Route index element={home} />
         <Route path="today" element={<Guard any={["planner.self"]} what="the study day"><StudentHome /></Guard>} />

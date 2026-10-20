@@ -1,10 +1,12 @@
 import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { processOutboxBatch } from "./jobs/outbox.js";
+import { chatHub } from "./realtime/hub.js";
 
-createApp().listen(env.PORT, () => {
+const server = createApp().listen(env.PORT, () => {
   console.log(`AI Gurukul API listening on http://localhost:${env.PORT}`);
 });
+chatHub.attach(server);
 
 if (env.RUN_WORKER_IN_PROCESS === "true") {
   // Simple hosts without a separate worker process: poll the outbox in the background.
