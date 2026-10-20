@@ -30,6 +30,7 @@ import { examsRouter } from "./modules/school/exams.js";
 import { feesRouter } from "./modules/school/fees.js";
 import { academicsRouter } from "./modules/academics/routes.js";
 import { admissionsRouter, idCardsRouter, publicAdmissionsRouter } from "./modules/school/admissions.js";
+import { directoryRouter, MAX_UPLOAD_MB } from "./modules/school/directory.js";
 import { engagementRouter } from "./modules/school/engagement.js";
 import { hrRouter } from "./modules/school/hr.js";
 import { eventsRouter, leaveRouter } from "./modules/school/leave.js";
@@ -51,6 +52,8 @@ export function createApp() {
 
   // Webhooks need the raw body for signature verification: mount before express.json().
   app.use("/api/v1/billing/webhooks", billingWebhookRouter);
+  // Document uploads arrive as base64 JSON (about 4/3 of the file size).
+  app.use("/api/v1/directory/documents", express.json({ limit: `${Math.ceil(MAX_UPLOAD_MB * 1.4)}mb` }));
   app.use(express.json({ limit: "1mb" }));
   app.use(authenticate);
   app.use("/api/v1", rateLimit({ name: "api", windowMs: 60_000, max: 300 }));
@@ -97,6 +100,7 @@ export function createApp() {
   app.use("/api/v1/id-cards", tenantScoped, idCardsRouter);
   app.use("/api/v1/hr", tenantScoped, hrRouter);
   app.use("/api/v1/academics", tenantScoped, academicsRouter);
+  app.use("/api/v1/directory", tenantScoped, directoryRouter);
   // Public (no sign-in): a school's online admission form.
   app.use("/api/v1/public/admissions", publicAdmissionsRouter);
 

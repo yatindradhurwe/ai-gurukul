@@ -22,6 +22,7 @@ import { ClassesPage } from "./pages/ClassesPage";
 import { ClassroomPage } from "./pages/ClassroomPage";
 import { ContentPage } from "./pages/ContentPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { DirectoryActivityPage, DirectoryClassPage, DirectoryPage, DirectoryStaffPage, DirectoryStudentPage, MyClassesPage } from "./pages/DirectoryPage";
 import { ExamDetailPage, ExamsPage } from "./pages/ExamsPage";
 import { FeesPage, ReceiptPage } from "./pages/FeesPage";
 import { HostelPage } from "./pages/HostelPage";
@@ -54,6 +55,7 @@ const CLASSROOM = ["classes.manage", "classes.attend"];
 const CLASSROOM_OR_PARENT = [...CLASSROOM, "reports.children"];
 const EXAMS = [...CLASSROOM_OR_PARENT, "exams.manage"];
 const FEES = ["fees.manage", "classes.attend", "reports.children"];
+const DIRECTORY = ["directory.manage", "classes.manage"];
 
 function App() {
   const { user, loading, info } = useAuth();
@@ -116,6 +118,12 @@ function App() {
         <Route path="children/:studentId" element={<Guard any={["reports.children"]} what="this report"><ChildReportPage /></Guard>} />
         <Route path="content" element={<Guard any={["content.manage", "content.review"]} what="content"><ContentPage /></Guard>} />
         <Route path="billing" element={<Guard any={["tenant.billing"]} what="billing"><BillingPage /></Guard>} />
+        <Route path="directory" element={<Guard any={["directory.manage"]} what="the school directory"><DirectoryPage /></Guard>} />
+        <Route path="directory/classes/:id" element={<Guard any={DIRECTORY} what="this class"><DirectoryClassPage /></Guard>} />
+        <Route path="directory/students/:id" element={<Guard any={DIRECTORY} what="this student"><DirectoryStudentPage /></Guard>} />
+        <Route path="directory/staff/:userId" element={<DirectoryStaffPage />} />
+        <Route path="directory/activities/:id" element={<Guard any={DIRECTORY} what="this activity"><DirectoryActivityPage /></Guard>} />
+        <Route path="my-classes" element={<Guard any={["classes.manage"]} what="your classes"><MyClassesPage /></Guard>} />
         <Route path="people" element={<Guard any={["members.manage"]} what="people"><PeoplePage /></Guard>} />
         <Route path="join" element={<JoinPage />} />
         <Route path="platform" element={<PlatformAdminPage />} />

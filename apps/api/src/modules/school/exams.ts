@@ -226,7 +226,7 @@ examsRouter.delete(
   }),
 );
 
-interface PaperRow {
+export interface PaperRow {
   id: string;
   subject: string;
   max_marks: string | number;
@@ -234,7 +234,7 @@ interface PaperRow {
   grade_item_id: string | null;
 }
 
-function summarise(papers: PaperRow[], marksFor: (p: PaperRow) => number | null) {
+export function summarise(papers: PaperRow[], marksFor: (p: PaperRow) => number | null) {
   const rows = papers.map((p) => {
     const marks = marksFor(p);
     const passed = marks == null || p.pass_marks == null ? null : marks >= Number(p.pass_marks);

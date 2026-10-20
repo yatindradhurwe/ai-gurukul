@@ -70,7 +70,18 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   return body as T;
 }
 
-export const formatPaise = (paise: number) =>
+/** Fetch a private file (e.g. an uploaded document) as a Blob with the caller's credentials. */
+export async function apiBlob(path: string, retry = true): Promise<Blob> {
+  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
+  if (res.status === 401 && retry && (await tryRefresh())) return apiBlob(path, false);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, body.error?.code ?? "error", body.error?.message ?? res.statusText);
+  }
+  return res.blob();
+}
+
+export const formatPaise =(paise: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(paise / 100);
 
 export const todayISO = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });

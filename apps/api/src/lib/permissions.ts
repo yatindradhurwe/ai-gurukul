@@ -30,6 +30,7 @@ export const PERMISSIONS = [
   "payroll.manage",
   "leave.approve",
   "academics.manage",
+  "directory.manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -40,7 +41,7 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "members.manage", "curriculum.read", "content.manage", "assessments.manage",
     "planner.manage_students", "reports.class", "reports.tenant", "usage.read", "classes.manage",
     "announcements.manage", "fees.manage", "exams.manage", "library.manage", "transport.manage", "hostel.manage",
-    "admissions.manage", "payroll.manage", "leave.approve", "academics.manage",
+    "admissions.manage", "payroll.manage", "leave.approve", "academics.manage", "directory.manage",
   ],
   teacher: [
     "curriculum.read", "content.manage", "assessments.manage", "assessments.review",

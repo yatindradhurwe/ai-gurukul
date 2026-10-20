@@ -42,6 +42,7 @@ export const NAV: NavGroup[] = [
     label: "Classroom",
     icon: "video",
     items: [
+      { to: "/my-classes", label: "My classes", icon: "graduation", hint: "Subjects, students and activities you teach", show: (can) => staff(can) && !can("directory.manage") },
       { to: "/classes", label: "Live classes", icon: "video", hint: "AI avatar lessons", show: (can) => staff(can) || learner(can) },
       { to: "/timetable", label: "Timetable", icon: "clock", hint: "The weekly schedule", show: (can) => staff(can) || learner(can) },
       { to: "/assignments", label: "Assignments", icon: "clipboard", hint: "Homework and projects", show: (can) => staff(can) || learner(can) || parent(can) },
@@ -85,6 +86,7 @@ export const NAV: NavGroup[] = [
     label: "Admin",
     icon: "shield",
     items: [
+      { to: "/directory", label: "School directory", icon: "users", hint: "Staff, classes 1–12, students, documents", show: (can) => can("directory.manage") },
       { to: "/academics/setup", label: "Academic setup", icon: "sliders", hint: "Year, holidays, syllabi, subjects", show: (can) => can("academics.manage") },
       { to: "/admissions", label: "Admissions", icon: "graduation", hint: "Enquiries to admitted students", show: (can) => can("admissions.manage") },
       { to: "/id-cards", label: "ID cards", icon: "file", hint: "Cards and certificates", show: (can) => can("admissions.manage") || can("members.manage") },
@@ -384,6 +386,7 @@ function usePageTitle() {
   if (pathname.startsWith("/academics/setup")) return "Academic setup";
   if (pathname.startsWith("/certificates/")) return "Certificate";
   if (pathname.startsWith("/payslips")) return "Payslips";
+  if (pathname.startsWith("/directory/")) return "School directory";
   const all = NAV.flatMap((g) => g.items);
   return all.filter((n) => isActive(pathname, n.to)).sort((a, b) => b.to.length - a.to.length)[0]?.label ?? "AI Gurukul";
 }
