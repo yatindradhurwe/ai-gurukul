@@ -185,6 +185,37 @@ Teachers manage records for the classes they teach; owners and admins for every 
 | DELETE | `/gradebook/items/:id` | classes.manage | |
 | GET | `/gradebook/report-card?studentId&term` | self / parent / staff | Per-class marks with CBSE grade bands (A1–E), overall, attendance and homework |
 
+## Fees, exams and library
+
+Amounts are sent in rupees and returned in paise (`*_paise`). Fee staff are owners, admins, staff/HR and accountants (`fees.manage`); library staff are owners, admins, staff/HR and librarians (`library.manage`); exams are managed by owners and admins (`exams.manage`).
+
+| Method | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/fees/summary` | fees.manage | Billed, collected, outstanding, overdue; by method; recent payments |
+| GET / POST | `/fees/structures` | fees.manage | `{name, category, amount, dueDate, classId?}` bills every matching student |
+| POST | `/fees/structures/:id/apply` | fees.manage | Bills students who joined later |
+| DELETE | `/fees/structures/:id` | fees.manage | Refused once payments exist |
+| GET | `/fees/classes`, `/fees/students` | fees.manage | Pickers for billing |
+| GET | `/fees/invoices?state&studentId&structureId&search` | fees.manage | `state`: due, partial, overdue, paid, cancelled, unpaid |
+| POST | `/fees/invoices` | fees.manage | One-off invoice `{studentId, title, amount, dueDate}` |
+| PATCH | `/fees/invoices/:id` | fees.manage | `{discount, discountNote}` concession, or `{status: cancelled}` if unpaid |
+| POST | `/fees/invoices/:id/payments` | fees.manage | `{amount, method, reference?}`; never more than the balance; issues `RCPT-YYYY-NNNNN` |
+| GET | `/fees/student?studentId` | self / parent / fees.manage | Invoices, payments and totals |
+| GET | `/fees/receipts/:paymentId` | self / parent / fees.manage | Printable receipt |
+| GET / POST | `/exams` | member / exams.manage | Others see published exams with papers for their classes |
+| GET / PATCH / DELETE | `/exams/:id` | member / exams.manage | Date sheet; `status: draft\|published\|completed` (completed = results declared) |
+| POST | `/exams/:id/papers` | exams.manage | `{classId, subject, date, startTime, durationMinutes, maxMarks, passMarks?, room?}`; creates the gradebook column; overlaps refused |
+| DELETE | `/exams/papers/:paperId` | exams.manage | Also removes the gradebook column |
+| GET | `/exams/:id/results?classId` | exams.manage / class teacher | Marks, total, %, grade, pass/fail and rank |
+| GET | `/exams/:id/student?studentId` | self / parent / staff | Students and parents only after results are declared |
+| GET | `/library/books?search&category` | member | Catalogue with availability |
+| POST / PATCH / DELETE | `/library/books[/:id]` | library.manage | |
+| GET | `/library/summary`, `/library/members`, `/library/loans?state&userId` | library.manage | |
+| POST | `/library/loans` | library.manage | `{bookId, userId, dueDate?}`; 14 days by default, at most 5 books per member |
+| POST | `/library/loans/:id/return` | library.manage | `{waiveFine?, finePaid?}`; fine ₹2 per day late |
+| POST | `/library/loans/:id/renew`, `/library/loans/:id/fine-paid` | library.manage | |
+| GET | `/library/my?studentId` | member / parent | Own loans, or a child's |
+
 ## Parents
 
 | Method | Path | Permission | Notes |

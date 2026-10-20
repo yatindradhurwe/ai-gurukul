@@ -10,7 +10,7 @@ describe.skipIf(!dbAvailable)("demo accounts setup", () => {
 
   it("creates one working login per role, idempotently", async () => {
     const first = await setupDemo();
-    expect(first.map((r) => r.user.key)).toEqual(["superadmin", "principal", "admin", "teacher", "staff", "student1", "student2", "parent"]);
+    expect(first.map((r) => r.user.key)).toEqual(["superadmin", "principal", "admin", "teacher", "staff", "accountant", "librarian", "student1", "student2", "parent"]);
     expect(first.every((r) => r.password)).toBe(true);
 
     const login = async (email: string, password: string) => (await request(app).post("/api/v1/auth/login").send({ email, password }).expect(200)).body.accessToken as string;
@@ -34,7 +34,7 @@ describe.skipIf(!dbAvailable)("demo accounts setup", () => {
 
     // School admin and staff/HR manage people; HR cannot open a student's academic records.
     const members = await request(app).get("/api/v1/tenants/current/members").set(await as("staff")).expect(200);
-    expect(members.body.members).toHaveLength(8);
+    expect(members.body.members).toHaveLength(10);
     const roles = Object.fromEntries(members.body.members.map((m: any) => [m.email, m.roles]));
     expect(roles[byKey.staff.user.email]).toEqual(["staff"]);
     expect(roles[byKey.admin.user.email]).toEqual(["tenant_admin"]);
@@ -43,11 +43,19 @@ describe.skipIf(!dbAvailable)("demo accounts setup", () => {
     await request(app).get(`/api/v1/academic/syllabus-progress?studentId=${ravi}`).set(await as("staff")).expect(403);
     await request(app).get(`/api/v1/academic/syllabus-progress?studentId=${ravi}`).set(await as("admin")).expect(200);
 
+    // Sample campus records: the accountant sees fees, the librarian the library, the student a published exam.
+    const fees = (await request(app).get("/api/v1/fees/summary").set(await as("accountant")).expect(200)).body.totals;
+    expect(Number(fees.collected)).toBe(1180000);
+    await request(app).get("/api/v1/fees/summary").set(await as("librarian")).expect(403);
+    expect((await request(app).get("/api/v1/library/loans?state=overdue").set(await as("librarian")).expect(200)).body.loans).toHaveLength(1);
+    expect((await request(app).get("/api/v1/exams").set(await as("student1")).expect(200)).body.exams[0]).toMatchObject({ name: "Half-yearly examination", papers: 3 });
+
     // Re-running keeps passwords unless asked to reset, and does not duplicate data.
     const second = await setupDemo();
     expect(second.every((r) => r.password === null)).toBe(true);
     await login(byKey.teacher.user.email, byKey.teacher.password!);
     expect((await request(app).get("/api/v1/classes").set(await as("teacher"))).body.classes[0].sessions).toHaveLength(1);
+    expect((await request(app).get("/api/v1/fees/structures").set(await as("accountant"))).body.structures).toHaveLength(2);
 
     const reset = await setupDemo({ reset: true, password: "Chosen#Pass2026" });
     expect(reset.every((r) => r.password === "Chosen#Pass2026")).toBe(true);

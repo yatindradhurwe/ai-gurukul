@@ -204,3 +204,7 @@ export const todayISO = () => {
 };
 
 export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** Integer paise as Indian rupees, e.g. 1250000 → "₹12,500". */
+export const inr = (paise: number | string | null | undefined) =>
+  paise == null ? "—" : `₹${(Number(paise) / 100).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;

@@ -53,9 +53,17 @@ export const NAV: NavGroup[] = [
   {
     label: "Academics",
     items: [
+      { to: "/exams", label: "Exams", icon: "file", show: (can) => can("exams.manage") || staff(can) || learner(can) || parent(can) },
       { to: "/gradebook", label: "Gradebook", icon: "award", show: staff },
-      { to: "/report-card", label: "Report card", icon: "file", show: (can) => learner(can) || parent(can) || staff(can) },
+      { to: "/report-card", label: "Report card", icon: "chart", show: (can) => learner(can) || parent(can) || staff(can) },
       { to: "/children", label: "My children", icon: "heart", show: parent },
+    ],
+  },
+  {
+    label: "Campus",
+    items: [
+      { to: "/fees", label: "Fees", icon: "card", show: (can) => can("fees.manage") || learner(can) || parent(can) },
+      { to: "/library", label: "Library", icon: "book", show: () => true },
     ],
   },
   {
@@ -67,7 +75,7 @@ export const NAV: NavGroup[] = [
     items: [
       { to: "/content", label: "Content", icon: "folder", show: (can) => can("content.manage") || can("content.review") },
       { to: "/people", label: "People", icon: "users", show: (can) => can("members.manage") },
-      { to: "/billing", label: "Billing", icon: "card", show: (can) => can("tenant.billing") },
+      { to: "/billing", label: "Subscription", icon: "sliders", show: (can) => can("tenant.billing") },
       { to: "/platform", label: "Platform admin", icon: "shield", show: (_can, platformAdmin) => platformAdmin },
     ],
   },
@@ -78,6 +86,8 @@ const ROLE_LABELS: Record<string, string> = {
   tenant_admin: "Admin",
   teacher: "Teacher",
   staff: "Staff / HR",
+  accountant: "Accountant",
+  librarian: "Librarian",
   content_reviewer: "Reviewer",
   parent: "Parent",
   student: "Student",
@@ -229,6 +239,7 @@ function usePageTitle() {
   const all = NAV.flatMap((g) => g.items);
   const match = all.filter((n) => (n.to === "/" ? pathname === "/" : pathname.startsWith(n.to))).sort((a, b) => b.to.length - a.to.length)[0];
   if (pathname.startsWith("/live/")) return "Live classroom";
+  if (pathname.startsWith("/fees/receipts/")) return "Fee receipt";
   return match?.label ?? "AI Gurukul";
 }
 

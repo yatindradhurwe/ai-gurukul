@@ -6,6 +6,7 @@ import { asyncHandler, parse, requireAuth, requireTenant } from "../../lib/http.
 import { resolveStudent } from "../../lib/student-access.js";
 import { requirePermission } from "../../middleware/authorization.js";
 import { gradeFor, loadClass, roster, round1 } from "./access.js";
+import { UNDECLARED_ITEM_SQL } from "../school/exams.js";
 import { ATTENDED_SQL, COUNTED_SQL } from "./attendance.js";
 
 export const gradebookRouter = Router();
@@ -139,8 +140,9 @@ gradebookRouter.get(
         `SELECT i.id, i.class_id, i.title, i.term, i.category, i.max_marks, i.date, s.marks, s.remarks
            FROM grade_items i LEFT JOIN grade_scores s ON s.item_id = i.id AND s.student_id = $1
           WHERE i.class_id = ANY($2::uuid[]) AND ($3::text IS NULL OR i.term = $3)
+            AND ($4::boolean OR NOT ${UNDECLARED_ITEM_SQL("i")})
           ORDER BY i.date NULLS LAST, i.created_at`,
-        [student.id, classes.map((c) => c.id), q.term ?? null],
+        [student.id, classes.map((c) => c.id), q.term ?? null, student.access === "staff"],
       );
       const terms = (await db.query(`SELECT DISTINCT term FROM grade_items WHERE class_id = ANY($1::uuid[]) ORDER BY term`, [classes.map((c) => c.id)])).rows.map((r) => r.term);
       const subjects = classes.map((c) => {

@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { Icon, type IconName } from "../components/icons";
-import { Avatar, Badge, Empty, ErrorNote, Progress, SectionCard, Spinner, StatCard, fmtDate, fmtDateTime, pct100, toneForPercent } from "../components/ui";
+import { Avatar, Badge, Empty, ErrorNote, Progress, SectionCard, Spinner, StatCard, fmtDate, fmtDateTime, inr, pct100, toneForPercent } from "../components/ui";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/useApi";
 
@@ -81,6 +81,8 @@ export function DashboardPage() {
   const teaching = d.teaching;
   const student = d.student;
   const children: any[] | undefined = d.children;
+  const fees = d.fees;
+  const library = d.library;
   const latest = (news.data?.announcements ?? []).slice(0, 4);
 
   const actions: { to: string; icon: IconName; label: string }[] = [];
@@ -89,7 +91,10 @@ export function DashboardPage() {
   if (can("members.manage")) actions.push({ to: "/people", icon: "users", label: "Invite people" });
   if (can("tutor.use")) actions.push({ to: "/tutor", icon: "sparkles", label: "Ask AI teacher" });
   if (can("planner.self")) actions.push({ to: "/today", icon: "target", label: "My study plan" });
-  if (can("reports.children")) actions.push({ to: "/report-card", icon: "file", label: "Report card" });
+  if (can("reports.children")) actions.push({ to: "/report-card", icon: "chart", label: "Report card" }, { to: "/fees", icon: "card", label: "Fees" });
+  if (can("fees.manage")) actions.push({ to: "/fees?tab=invoices", icon: "card", label: "Collect fees" });
+  if (can("library.manage")) actions.push({ to: "/library", icon: "book", label: "Issue a book" });
+  if (can("exams.manage")) actions.push({ to: "/exams", icon: "file", label: "Exams" });
 
   return (
     <div className="space-y-6">
@@ -127,6 +132,23 @@ export function DashboardPage() {
             <WeekBars days={org.attendanceWeek} />
           </SectionCard>
         </>
+      )}
+
+      {(fees || library) && (
+        <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+          {fees && (
+            <>
+              <StatCard label="Fees collected this month" value={inr(fees.collected_month_paise)} icon="trending" tone="green" />
+              <StatCard label="Fees outstanding" value={inr(fees.outstanding_paise)} icon="card" tone="amber" hint={fees.overdue_students ? `${fees.overdue_students} student(s) overdue` : "No overdue fees"} />
+            </>
+          )}
+          {library && (
+            <>
+              <StatCard label="Library books on loan" value={library.on_loan} icon="book" tone="sky" hint={`${library.titles} titles in the catalogue`} />
+              <StatCard label="Library overdue" value={library.overdue} icon="alert" tone={library.overdue ? "red" : "green"} />
+            </>
+          )}
+        </div>
       )}
 
       {/* Student overview */}
@@ -192,6 +214,42 @@ export function DashboardPage() {
             </SectionCard>
           )}
 
+          {student && (student.feesDuePaise > 0 || student.books.overdue > 0) && (
+            <div className="flex flex-wrap gap-3">
+              {student.feesDuePaise > 0 && (
+                <Link to="/fees" className="flex items-center gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
+                  <Icon name="card" size={16} /> {inr(student.feesDuePaise)} fees due{student.feesOverdue ? ` · ${student.feesOverdue} overdue` : ""}
+                </Link>
+              )}
+              {student.books.overdue > 0 && (
+                <Link to="/library" className="flex items-center gap-2 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
+                  <Icon name="book" size={16} /> {student.books.overdue} library book(s) overdue
+                </Link>
+              )}
+            </div>
+          )}
+
+          {student && student.exams.length > 0 && (
+            <SectionCard title="Upcoming exams" icon="file" action={<Link to="/exams" className="text-xs font-semibold text-brand">Date sheet →</Link>}>
+              <ul className="divide-y divide-slate-100">
+                {student.exams.map((p: any) => (
+                  <li key={p.id}>
+                    <Link to={`/exams/${p.exam_id}`} className="flex items-center justify-between gap-3 py-2.5">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{p.subject}</p>
+                        <p className="text-xs text-slate-500">
+                          {p.exam} · {p.start_time}
+                          {p.room && ` · ${p.room}`}
+                        </p>
+                      </div>
+                      <Badge tone="brand">{fmtDate(p.date, { weekday: "short", day: "numeric", month: "short" })}</Badge>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </SectionCard>
+          )}
+
           {student && (
             <SectionCard title="Homework due" icon="clipboard" action={<Link to="/assignments" className="text-xs font-semibold text-brand">All assignments →</Link>}>
               {student.due.length ? (
@@ -227,7 +285,10 @@ export function DashboardPage() {
                         <Avatar name={c.name} size={40} />
                         <div>
                           <p className="font-semibold text-slate-900">{c.name}</p>
-                          <p className="text-xs text-slate-500">{c.pending} assignment(s) pending</p>
+                          <p className="text-xs text-slate-500">
+                            {c.pending} assignment(s) pending
+                            {Number(c.fees_due_paise) > 0 && ` · ${inr(c.fees_due_paise)} fees due`}
+                          </p>
                         </div>
                       </div>
                       <div className="mt-3">
@@ -259,7 +320,7 @@ export function DashboardPage() {
             </SectionCard>
           )}
 
-          {!org && !teaching && !student && !children && (
+          {!org && !teaching && !student && !children && !fees && !library && (
             <Empty title="Welcome to AI Gurukul" icon="sparkles">
               Use the menu to explore courses and announcements.
             </Empty>

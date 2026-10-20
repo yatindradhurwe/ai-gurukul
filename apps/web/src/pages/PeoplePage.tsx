@@ -9,6 +9,8 @@ const ROLE_LABELS: Record<string, string> = {
   tenant_admin: "Admin",
   teacher: "Teacher",
   staff: "Staff / HR",
+  accountant: "Accountant",
+  librarian: "Librarian",
   content_reviewer: "Content reviewer",
   parent: "Parent",
   student: "Student",
@@ -46,7 +48,7 @@ export function PeoplePage() {
       <form onSubmit={send} className="card grid gap-2 md:grid-cols-[1fr_200px_auto]">
         <input className="input" type="email" required placeholder="Email to invite" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-          {["tenant_admin", "teacher", "staff", "content_reviewer", "parent", "student"].map((r) => (
+          {["tenant_admin", "teacher", "staff", "accountant", "librarian", "content_reviewer", "parent", "student"].map((r) => (
             <option key={r} value={r}>
               {ROLE_LABELS[r]}
             </option>

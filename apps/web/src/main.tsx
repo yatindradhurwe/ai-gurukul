@@ -15,6 +15,9 @@ import { ClassesPage } from "./pages/ClassesPage";
 import { ClassroomPage } from "./pages/ClassroomPage";
 import { ContentPage } from "./pages/ContentPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { ExamDetailPage, ExamsPage } from "./pages/ExamsPage";
+import { FeesPage, ReceiptPage } from "./pages/FeesPage";
+import { LibraryPage } from "./pages/LibraryPage";
 import { GradebookPage } from "./pages/GradebookPage";
 import { JoinPage } from "./pages/JoinPage";
 import { LearnPage } from "./pages/LearnPage";
@@ -41,6 +44,8 @@ function Guard({ any, what, children }: { any: string[]; what: string; children:
 
 const CLASSROOM = ["classes.manage", "classes.attend"];
 const CLASSROOM_OR_PARENT = [...CLASSROOM, "reports.children"];
+const EXAMS = [...CLASSROOM_OR_PARENT, "exams.manage"];
+const FEES = ["fees.manage", "classes.attend", "reports.children"];
 
 function App() {
   const { user, loading, info } = useAuth();
@@ -64,6 +69,11 @@ function App() {
         <Route path="gradebook" element={<Guard any={["classes.manage"]} what="the gradebook"><GradebookPage /></Guard>} />
         <Route path="report-card" element={<Guard any={[...CLASSROOM_OR_PARENT, "reports.class"]} what="report cards"><ReportCardPage /></Guard>} />
         <Route path="announcements" element={<AnnouncementsPage />} />
+        <Route path="exams" element={<Guard any={EXAMS} what="exams"><ExamsPage /></Guard>} />
+        <Route path="exams/:id" element={<Guard any={EXAMS} what="this exam"><ExamDetailPage /></Guard>} />
+        <Route path="fees" element={<Guard any={FEES} what="fees"><FeesPage /></Guard>} />
+        <Route path="fees/receipts/:id" element={<Guard any={FEES} what="this receipt"><ReceiptPage /></Guard>} />
+        <Route path="library" element={<LibraryPage />} />
         <Route path="plan" element={<Guard any={["planner.self"]} what="the study plan"><PlanPage /></Guard>} />
         <Route path="results" element={<Guard any={["reports.self"]} what="results"><ResultsPage /></Guard>} />
         <Route path="results/quiz/:id" element={<Guard any={["assessments.take"]} what="this quiz"><QuizPage /></Guard>} />

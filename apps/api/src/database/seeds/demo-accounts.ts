@@ -40,6 +40,8 @@ const USERS: DemoUser[] = [
   { key: "admin", name: "Rahul Verma", email: `admin@${DOMAIN}`, role: "tenant_admin", label: "School admin", what: "School admin: people, classes, content, reports" },
   { key: "teacher", name: "Meera Iyer", email: `teacher@${DOMAIN}`, role: "teacher", label: "Teacher", what: "Teacher: classes, live AI lessons, doubts, tests" },
   { key: "staff", name: "Kavita Nair", email: `staff@${DOMAIN}`, role: "staff", label: "Staff / HR", what: "Staff / HR: people directory, invitations, organisation reports" },
+  { key: "accountant", name: "Anil Mehta", email: `accountant@${DOMAIN}`, role: "accountant", label: "Accountant", what: "Accountant: fee structures, collections and receipts" },
+  { key: "librarian", name: "Lata Joshi", email: `librarian@${DOMAIN}`, role: "librarian", label: "Librarian", what: "Librarian: catalogue, issue and return books, fines" },
   { key: "student1", name: "Ravi Kumar", email: `student1@${DOMAIN}`, role: "student", label: "Student", what: "Student (enrolled in 8-A Science)" },
   { key: "student2", name: "Anya Singh", email: `student2@${DOMAIN}`, role: "student", label: "Student", what: "Student (enrolled in 8-A Science)" },
   { key: "parent", name: "Sunita Kumar", email: `parent@${DOMAIN}`, role: "parent", label: "Parent", what: "Parent of Ravi Kumar" },
@@ -138,6 +140,100 @@ async function seedSchoolRecords(db: Db, c: { tenantId: string; classId: string;
   }
 }
 
+/**
+ * Sample fees (one part-paid), a published exam date sheet and a small library with
+ * one book on loan. Added once: skipped when Demo School already has fee structures.
+ */
+async function seedCampusRecords(db: Db, c: { tenantId: string; classId: string; ids: Record<string, string>; s1: string; s2: string }) {
+  const done = await db.query(`SELECT 1 FROM fee_structures WHERE tenant_id = $1 LIMIT 1`, [c.tenantId]);
+  if (done.rowCount) return;
+  const { tenantId: t, classId: cls, ids, s1, s2 } = c;
+  const today = `(now() AT TIME ZONE 'Asia/Kolkata')::date`;
+
+  const tuition = (
+    await db.query(
+      `INSERT INTO fee_structures (tenant_id, name, category, amount_paise, due_date, class_id, created_by)
+       VALUES ($1,'Term 1 tuition fee','tuition',1500000,${today} + 15,$2,$3) RETURNING id, name, amount_paise, due_date`,
+      [t, cls, ids.accountant],
+    )
+  ).rows[0];
+  const transport = (
+    await db.query(
+      `INSERT INTO fee_structures (tenant_id, name, category, amount_paise, due_date, created_by)
+       VALUES ($1,'Transport — October','transport',180000,${today} - 5,$2) RETURNING id, name, amount_paise, due_date`,
+      [t, ids.accountant],
+    )
+  ).rows[0];
+  const inv: Record<string, string> = {};
+  for (const s of [tuition, transport]) {
+    for (const sid of [s1, s2]) {
+      const r = await db.query(
+        `INSERT INTO fee_invoices (tenant_id, student_id, structure_id, title, amount_paise, due_date) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+        [t, sid, s.id, s.name, s.amount_paise, s.due_date],
+      );
+      inv[`${s.name}:${sid}`] = r.rows[0].id;
+    }
+  }
+  const year = new Date().getFullYear();
+  const payments: [string, number, string, string | null][] = [
+    [inv[`Term 1 tuition fee:${s1}`], 1000000, "upi", "UPI-4417820931"],
+    [inv[`Transport — October:${s1}`], 180000, "cash", null],
+  ];
+  for (let i = 0; i < payments.length; i++) {
+    const [invoice, amount, method, ref] = payments[i];
+    await db.query(
+      `INSERT INTO fee_payments (tenant_id, invoice_id, amount_paise, method, reference, receipt_no, received_by, paid_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7, now() - make_interval(days => $8))`,
+      [t, invoice, amount, method, ref, `RCPT-${year}-${String(i + 1).padStart(5, "0")}`, ids.accountant, 3 - i],
+    );
+  }
+
+  const exam = (
+    await db.query(
+      `INSERT INTO exams (tenant_id, name, term, start_date, end_date, status, instructions, created_by)
+       VALUES ($1,'Half-yearly examination','Term 1',${today} + 7,${today} + 12,'published','Report to the exam hall 15 minutes early. Carry your school ID card.',$2) RETURNING id, name, term`,
+      [t, ids.admin],
+    )
+  ).rows[0];
+  const papers: [string, number, string, string][] = [
+    ["Science", 7, "09:00", "Hall A"],
+    ["Mathematics", 9, "09:00", "Hall A"],
+    ["English", 11, "09:00", "Hall B"],
+  ];
+  for (const [subject, offset, start, room] of papers) {
+    const item = (
+      await db.query(
+        `INSERT INTO grade_items (tenant_id, class_id, title, term, category, max_marks, date, created_by) VALUES ($1,$2,$3,$4,'exam',80,${today} + $5::int,$6) RETURNING id`,
+        [t, cls, `${exam.name} — ${subject}`, exam.term, offset, ids.admin],
+      )
+    ).rows[0];
+    await db.query(
+      `INSERT INTO exam_papers (tenant_id, exam_id, class_id, subject, date, start_time, duration_minutes, max_marks, pass_marks, room, grade_item_id)
+       VALUES ($1,$2,$3,$4,${today} + $5::int,$6,180,80,27,$7,$8)`,
+      [t, exam.id, cls, subject, offset, start, room, item.id],
+    );
+  }
+
+  const books: [string, string, string, string, number][] = [
+    ["Wings of Fire", "A. P. J. Abdul Kalam", "Biography", "A-1", 3],
+    ["The Story of My Experiments with Truth", "M. K. Gandhi", "Biography", "A-1", 2],
+    ["Malgudi Days", "R. K. Narayan", "Fiction", "B-2", 4],
+    ["Panchatantra Tales", "Vishnu Sharma", "Fiction", "B-3", 5],
+    ["NCERT Science — Class 8", "NCERT", "Science", "C-1", 10],
+    ["A Brief History of Time", "Stephen Hawking", "Science", "C-2", 1],
+    ["Discovery of India", "Jawaharlal Nehru", "History", "D-1", 2],
+    ["Oxford Student Atlas for India", "Oxford University Press", "Reference", "R-1", 6],
+  ];
+  const ids2: string[] = [];
+  for (const [title, author, category, shelf, copies] of books) {
+    ids2.push((await db.query(`INSERT INTO library_books (tenant_id, title, author, category, shelf, total_copies) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`, [t, title, author, category, shelf, copies])).rows[0].id);
+  }
+  const ravi = (await db.query(`SELECT user_id FROM student_profiles WHERE id = $1`, [s1])).rows[0].user_id;
+  const anya = (await db.query(`SELECT user_id FROM student_profiles WHERE id = $1`, [s2])).rows[0].user_id;
+  await db.query(`INSERT INTO library_loans (tenant_id, book_id, user_id, issued_at, due_date, issued_by) VALUES ($1,$2,$3, now() - interval '5 days', ${today} + 9, $4)`, [t, ids2[0], ravi, ids.librarian]);
+  await db.query(`INSERT INTO library_loans (tenant_id, book_id, user_id, issued_at, due_date, issued_by) VALUES ($1,$2,$3, now() - interval '17 days', ${today} - 3, $4)`, [t, ids2[2], anya, ids.librarian]);
+}
+
 export async function setupDemo(opts: { reset?: boolean; password?: string; superadminPassword?: string } = {}) {
   await seed(() => {});
   const db = await pool.connect();
@@ -198,6 +294,7 @@ export async function setupDemo(opts: { reset?: boolean; password?: string; supe
       await db.query(`INSERT INTO live_sessions (tenant_id, class_id, lesson_id, title, created_by) VALUES ($1,$2,$3,$4,$5)`, [tenant.id, cls.id, lesson.id, lesson.title, ids.teacher]);
     }
     await seedSchoolRecords(db, { tenantId: tenant.id, classId: cls.id, ids, s1, s2 });
+    await seedCampusRecords(db, { tenantId: tenant.id, classId: cls.id, ids, s1, s2 });
     await db.query("COMMIT");
   } catch (err) {
     await db.query("ROLLBACK");

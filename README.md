@@ -8,6 +8,7 @@ It combines four things:
 - **A rules-driven academic planner.** It works from the syllabus, marks, mastery evidence, exam dates and the time a student actually has. It shows when there isn't enough time, and it creates a new version of the plan after a disruption.
 - **Live AI classrooms.** A talking avatar teacher teaches a class in real time, and students ask doubts by voice or text. The avatar answers each doubt aloud for the whole class from approved material, and doubts outside the material go to the human teacher. See [Live classrooms](#live-ai-classrooms).
 - **Talking avatar lessons behind a provider-neutral interface.** A text lesson with captions is always available as a fallback.
+- **Fees, exams and library.** Fee structures billed per class with concessions, payments and printable receipts; exam date sheets whose papers feed the gradebook, with ranked results declared to students and parents; a library catalogue with issue, return, renewals and late fines.
 - **School records.** Announcements, assignments with submissions and grading, daily attendance, a weekly timetable, a gradebook and printable report cards, plus a role-aware dashboard for owners, teachers, students and parents.
 - **Subscriptions and usage metering, enforced on the server.**
 
@@ -68,6 +69,8 @@ It creates the organization "Demo School" with these logins:
 | `principal@demo.aigurukul.test` | School owner | Everything in the school, including billing |
 | `admin@demo.aigurukul.test` | School admin | People, classes, content, reports |
 | `teacher@demo.aigurukul.test` | Teacher | Live Classes (8-A Science, with a live AI lesson ready), content, tests |
+| `accountant@demo.aigurukul.test` | Accountant | **Fees**: structures, collections, receipts |
+| `librarian@demo.aigurukul.test` | Librarian | **Library**: catalogue, issue and return, fines |
 | `staff@demo.aigurukul.test` | Staff / HR | **People** directory and invitations, organisation reports. No access to students' academic records. |
 | `student1@…` and `student2@…` | Students | Home, AI Teacher, Live Classes, Study Plan, Results |
 | `parent@demo.aigurukul.test` | Parent of student1 | Children, weekly report, billing |
@@ -81,7 +84,7 @@ Environment variables:
 | `SUPERADMIN_EMAIL` | Use your own email for the super-admin |
 | `DEMO_EMAIL_DOMAIN` | Change the email domain for all demo accounts |
 
-Demo School also gets sample records the first time: a weekly timetable, announcements, two assignments (one graded), five days of attendance and two marked assessments, so every screen has data.
+Demo School also gets sample records the first time: a weekly timetable, announcements, two assignments (one graded), five days of attendance, two marked assessments, fees with receipts, a published half-yearly date sheet and a small library with books on loan, so every screen has data.
 
 The script is safe to run again: existing accounts keep their passwords unless you pass `--reset-passwords`. Change or remove demo accounts before real users join.
 

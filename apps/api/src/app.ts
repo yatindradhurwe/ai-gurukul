@@ -26,6 +26,9 @@ import { attendanceRouter } from "./modules/lms/attendance.js";
 import { dashboardRouter } from "./modules/lms/dashboard.js";
 import { gradebookRouter } from "./modules/lms/gradebook.js";
 import { timetableRouter } from "./modules/lms/timetable.js";
+import { examsRouter } from "./modules/school/exams.js";
+import { feesRouter } from "./modules/school/fees.js";
+import { libraryRouter } from "./modules/school/library.js";
 import { parentsRouter } from "./modules/parents/routes.js";
 import { tenantsRouter } from "./modules/tenants/routes.js";
 import { usageRouter } from "./modules/usage/routes.js";
@@ -72,6 +75,9 @@ export function createApp() {
   app.use("/api/v1/attendance", tenantScoped, attendanceRouter);
   app.use("/api/v1/timetable", tenantScoped, timetableRouter);
   app.use("/api/v1/gradebook", tenantScoped, gradebookRouter);
+  app.use("/api/v1/fees", tenantScoped, feesRouter);
+  app.use("/api/v1/exams", tenantScoped, examsRouter);
+  app.use("/api/v1/library", tenantScoped, libraryRouter);
 
   // Single-app deployments: serve the built React app and fall back to index.html for client routes.
   const webDist = env.WEB_DIST_DIR ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
