@@ -5,6 +5,7 @@ import { Layout } from "./components/Layout";
 import { NoAccess, Spinner } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { AccessPage } from "./pages/AccessPage";
+import { PromotionPage } from "./pages/PromotionPage";
 import { AcademicSetupPage, AcademicsPage, MySyllabusPage, SubjectPlanPage } from "./pages/AcademicsPage";
 import { AdmissionsPage, PublicApplyPage } from "./pages/AdmissionsPage";
 import { AnnouncementsPage } from "./pages/AnnouncementsPage";
@@ -126,6 +127,7 @@ function App() {
         <Route path="directory/staff/:userId" element={<DirectoryStaffPage />} />
         <Route path="directory/activities/:id" element={<Guard any={DIRECTORY} what="this activity"><DirectoryActivityPage /></Guard>} />
         <Route path="my-classes" element={<Guard any={["classes.manage"]} what="your classes"><MyClassesPage /></Guard>} />
+        <Route path="promotion" element={<Guard any={["directory.manage"]} what="promotion"><PromotionPage /></Guard>} />
         <Route path="access" element={<Guard any={["tenant.manage"]} what="access settings"><AccessPage /></Guard>} />
         <Route path="people" element={<Guard any={["members.manage"]} what="people"><PeoplePage /></Guard>} />
         <Route path="join" element={<JoinPage />} />

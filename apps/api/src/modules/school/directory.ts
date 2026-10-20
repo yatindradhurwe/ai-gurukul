@@ -886,6 +886,70 @@ async function studentExtras(db: Db, s: { id: string; user_id: string }) {
 // ---------------------------------------------------------------------------
 // Promotion: freeze the year's report, then move students to their next class
 // ---------------------------------------------------------------------------
+export interface PromotionInput {
+  fromClassId: string;
+  examId?: string | null;
+  /** Skip (and report) students who already have this year's record in the class, instead of failing. */
+  skipExisting?: boolean;
+  toClassId?: string | null;
+  students: { studentId: string; result: "promoted" | "detained" | "passed_out" | "left"; remarks?: string; toClassId?: string | null }[];
+}
+
+/**
+ * Freeze each student's report for the year in student_year_records, then move
+ * them: promoted → their next class, detained → stay (or a chosen class),
+ * passed out / left → leave the class. Used by manual promotion, automatic
+ * promotion when final results are declared, and supplementary results.
+ */
+export async function applyPromotion(db: Db, tenantId: string, actorId: string, b: PromotionInput) {
+  const from = (await db.query(`SELECT c.*, y.name AS year_name, y.start_date, y.end_date FROM classes c LEFT JOIN academic_years y ON y.id = c.academic_year_id WHERE c.id = $1`, [b.fromClassId])).rows[0];
+  if (!from) throw notFound("Class");
+  const targets = new Map<string, { id: string; name: string }>();
+  for (const id of new Set([b.toClassId, ...b.students.map((x) => x.toClassId)].filter(Boolean) as string[])) {
+    const c = (await db.query(`SELECT id, name FROM classes WHERE id = $1`, [id])).rows[0];
+    if (!c) throw notFound("Next class");
+    targets.set(id, c);
+  }
+  const year: YearRange =
+    (from.academic_year_id ? { id: from.academic_year_id, name: from.year_name, start: from.start_date, end: from.end_date } : null) ??
+    (await currentYear(db)) ?? { id: null, name: sessionName(new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10)), start: null, end: null };
+  const enrolled = new Set((await db.query(`SELECT student_id FROM class_enrollments WHERE class_id = $1`, [from.id])).rows.map((r) => r.student_id));
+  const done: { studentId: string; result: string; toClass: string | null }[] = [];
+  const skipped: string[] = [];
+  for (const st of b.students) {
+    const to = targets.get((st.toClassId ?? b.toClassId) as string) ?? null;
+    if (st.result === "promoted" && !to) throw badRequest("Choose the class students are promoted to");
+    if (st.result === "promoted" && to?.id === from.id) throw badRequest("Promote students to a different class");
+    if (!enrolled.has(st.studentId)) throw badRequest("Every student must be enrolled in the class being promoted");
+    const already = await db.query(`SELECT 1 FROM student_year_records WHERE student_id = $1 AND class_id = $2 AND year_name = $3`, [st.studentId, from.id, year.name]);
+    if (already.rowCount) {
+      if (b.skipExisting) {
+        skipped.push(st.studentId);
+        continue;
+      }
+      throw badRequest(`A ${year.name} record for this student in ${from.name} already exists`);
+    }
+    const classes = (await db.query(`SELECT c.id, c.name FROM class_enrollments e JOIN classes c ON c.id = e.class_id WHERE e.student_id = $1 ORDER BY c.name`, [st.studentId])).rows;
+    const report = await studentReport(db, st.studentId, classes, year.start ? year : null);
+    // Detained students stay in this class unless another is chosen.
+    const target = st.result === "promoted" || (st.result === "detained" && to && to.id !== from.id) ? to : null;
+    await db.query(
+      `INSERT INTO student_year_records (tenant_id, student_id, academic_year_id, year_name, class_id, class_name, grade, result, promoted_to_class_id, promoted_to_class_name, remarks, report, decided_by, exam_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [tenantId, st.studentId, year.id, year.name, from.id, from.name, from.grade, st.result, target?.id ?? null, target?.name ?? null, st.remarks ?? "", JSON.stringify(report), actorId, b.examId ?? null],
+    );
+    if (st.result === "detained" && !target) {
+      done.push({ studentId: st.studentId, result: st.result, toClass: from.name });
+      continue;
+    }
+    await db.query(`DELETE FROM class_enrollments WHERE class_id = $1 AND student_id = $2`, [from.id, st.studentId]);
+    if (target) await db.query(`INSERT INTO class_enrollments (tenant_id, class_id, student_id) VALUES ($1,$2,$3) ON CONFLICT (class_id, student_id) DO NOTHING`, [tenantId, target.id, st.studentId]);
+    done.push({ studentId: st.studentId, result: st.result, toClass: target?.name ?? null });
+  }
+  await audit(db, { tenantId, actorId, action: "students.promote", resourceType: "class", resourceId: from.id, metadata: { to: b.toClassId ?? null, year: year.name, count: done.length } });
+  return { year: year.name, students: done, skipped };
+}
+
 directoryRouter.post(
   "/promotions",
   requirePermission("directory.manage"),
@@ -903,45 +967,8 @@ directoryRouter.post(
       }),
       req.body,
     );
-    const out = await withTenant(tenant.id, async (db) => {
-      const from = (await db.query(`SELECT c.*, y.name AS year_name, y.start_date, y.end_date FROM classes c LEFT JOIN academic_years y ON y.id = c.academic_year_id WHERE c.id = $1`, [b.fromClassId])).rows[0];
-      if (!from) throw notFound("Class");
-      const to = b.toClassId ? (await db.query(`SELECT id, name FROM classes WHERE id = $1`, [b.toClassId])).rows[0] : null;
-      if (b.toClassId && !to) throw notFound("Next class");
-      if (b.students.some((x) => x.result === "promoted") && !to) throw badRequest("Choose the class students are promoted to");
-      if (to?.id === from.id && b.students.some((x) => x.result === "promoted")) throw badRequest("Promote students to a different class");
-      const year: YearRange =
-        (from.academic_year_id ? { id: from.academic_year_id, name: from.year_name, start: from.start_date, end: from.end_date } : null) ??
-        (await currentYear(db)) ?? { id: null, name: sessionName(new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10)), start: null, end: null };
-      const enrolled = new Set((await db.query(`SELECT student_id FROM class_enrollments WHERE class_id = $1`, [from.id])).rows.map((r) => r.student_id));
-      const done: { studentId: string; result: string }[] = [];
-      for (const st of b.students) {
-        if (!enrolled.has(st.studentId)) throw badRequest("Every student must be enrolled in the class being promoted");
-        const already = await db.query(`SELECT 1 FROM student_year_records WHERE student_id = $1 AND class_id = $2 AND year_name = $3`, [st.studentId, from.id, year.name]);
-        if (already.rowCount) throw badRequest(`A ${year.name} record for this student in ${from.name} already exists`);
-        const classes = (await db.query(`SELECT c.id, c.name FROM class_enrollments e JOIN classes c ON c.id = e.class_id WHERE e.student_id = $1 ORDER BY c.name`, [st.studentId])).rows;
-        const report = await studentReport(db, st.studentId, classes, year.start ? year : null);
-        // Detained students stay in this class unless another is chosen.
-        const target = st.result === "promoted" || (st.result === "detained" && to) ? to : null;
-        await db.query(
-          `INSERT INTO student_year_records (tenant_id, student_id, academic_year_id, year_name, class_id, class_name, grade, result, promoted_to_class_id, promoted_to_class_name, remarks, report, decided_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-          [tenant.id, st.studentId, year.id, year.name, from.id, from.name, from.grade, st.result, target?.id ?? null, target?.name ?? null, st.remarks, JSON.stringify(report), userId],
-        );
-        if (st.result === "detained" && !target) {
-          done.push({ studentId: st.studentId, result: st.result });
-          continue;
-        }
-        await db.query(`DELETE FROM class_enrollments WHERE class_id = $1 AND student_id = $2`, [from.id, st.studentId]);
-        if (target) {
-          await db.query(`INSERT INTO class_enrollments (tenant_id, class_id, student_id) VALUES ($1,$2,$3) ON CONFLICT (class_id, student_id) DO NOTHING`, [tenant.id, target.id, st.studentId]);
-        }
-        done.push({ studentId: st.studentId, result: st.result });
-      }
-      await audit(db, { tenantId: tenant.id, actorId: userId, action: "students.promote", resourceType: "class", resourceId: from.id, metadata: { to: to?.id ?? null, year: year.name, count: done.length } });
-      return { year: year.name, students: done };
-    });
-    res.status(201).json(out);
+    const out = await withTenant(tenant.id, (db) => applyPromotion(db, tenant.id, userId, b));
+    res.status(201).json({ year: out.year, students: out.students.map(({ studentId, result }) => ({ studentId, result })) });
   }),
 );
 

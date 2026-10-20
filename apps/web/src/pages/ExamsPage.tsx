@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/icons";
-import { Avatar, Badge, Empty, ErrorNote, Field, Modal, PageTitle, SectionCard, Spinner, StatCard, Tabs, fmtDate, pct100, toneForPercent, type Tone } from "../components/ui";
+import { Avatar, Badge, Empty, ErrorNote, Field, Modal, PageTitle, SectionCard, Spinner, StatCard, SuccessNote, Tabs, fmtDate, pct100, toneForPercent, type Tone } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { ClassPicker, StudentPicker, useClasses, useStudentOptions } from "../lib/lms";
@@ -54,7 +54,10 @@ export function ExamsPage() {
                   <p className="text-xs font-semibold text-brand">{e.term}</p>
                   <h2 className="mt-0.5 text-lg font-semibold text-slate-900">{e.name}</h2>
                 </div>
-                <Badge tone={STATUS[e.status].tone}>{STATUS[e.status].label}</Badge>
+                <div className="flex flex-wrap justify-end gap-1">
+                  {e.is_final && <Badge tone="amber">Final</Badge>}
+                  <Badge tone={STATUS[e.status].tone}>{STATUS[e.status].label}</Badge>
+                </div>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                 <div className="flex items-center gap-2 text-slate-600">
@@ -77,7 +80,7 @@ export function ExamsPage() {
 }
 
 function NewExam({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
-  const [form, setForm] = useState({ name: "", term: "Term 1", startDate: "", endDate: "", instructions: "" });
+  const [form, setForm] = useState({ name: "", term: "Term 1", startDate: "", endDate: "", instructions: "", isFinal: false });
   const [error, setError] = useState<string | null>(null);
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -115,6 +118,7 @@ function NewExam({ onClose, onCreated }: { onClose: () => void; onCreated: (id: 
         <Field label="Instructions for students (optional)">
           <textarea className="input min-h-[5rem]" value={form.instructions} onChange={(e) => setForm({ ...form, instructions: e.target.value })} placeholder="Report 15 minutes early. Bring your admit card." />
         </Field>
+        <FinalToggle checked={form.isFinal} onChange={(v) => setForm({ ...form, isFinal: v })} />
         <ErrorNote message={error} />
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={onClose}>
@@ -127,6 +131,18 @@ function NewExam({ onClose, onCreated }: { onClose: () => void; onCreated: (id: 
   );
 }
 
+function FinalToggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-start gap-3 rounded-2xl bg-amber-50 p-3 ring-1 ring-amber-200">
+      <input type="checkbox" className="mt-1 h-4 w-4 accent-brand" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span className="text-sm">
+        <span className="font-semibold text-slate-900">Final (annual) exam</span>
+        <span className="block text-xs text-slate-600">Its results decide promotion: pass → next class, a few failed subjects → supplementary re-exam, more → same class.</span>
+      </span>
+    </label>
+  );
+}
+
 export function ExamDetailPage() {
   const { id } = useParams();
   const { can } = useAuth();
@@ -135,6 +151,7 @@ export function ExamDetailPage() {
   const [tab, setTab] = useState<"sheet" | "results">("sheet");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [promotion, setPromotion] = useState<any>(null);
   const staff = can("exams.manage") || can("classes.manage");
 
   if (detail.loading && !detail.data) return <Spinner />;
@@ -145,7 +162,8 @@ export function ExamDetailPage() {
   const setStatus = async (status: string) => {
     setError(null);
     try {
-      await api(`/exams/${exam.id}`, { method: "PATCH", body: { status } });
+      const r = await api(`/exams/${exam.id}`, { method: "PATCH", body: { status } });
+      if (r.promotion) setPromotion(r.promotion);
       detail.reload();
     } catch (e) {
       setError((e as Error).message);
@@ -175,6 +193,7 @@ export function ExamDetailPage() {
             <p className="mt-1 text-sm text-slate-500">{range(exam.start_date, exam.end_date)}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {exam.is_final && <Badge tone="amber">Final exam · decides promotion</Badge>}
             <Badge tone={STATUS[exam.status].tone}>{STATUS[exam.status].label}</Badge>
             <button className="btn-ghost btn-sm no-print" onClick={() => window.print()}>
               <Icon name="printer" size={14} /> Print date sheet
@@ -193,7 +212,16 @@ export function ExamDetailPage() {
               </button>
             )}
             {exam.status === "published" && (
-              <button className="btn-ghost btn-sm" onClick={() => confirm("Declare results? Students and parents will see their marks.") && setStatus("completed")}>
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() =>
+                  confirm(
+                    exam.is_final
+                      ? "Declare final results? Students and parents will see their marks. If automatic promotion is on, students are promoted, sent to supplementary exams or kept back right away."
+                      : "Declare results? Students and parents will see their marks.",
+                  ) && setStatus("completed")
+                }
+              >
                 <Icon name="award" size={14} /> Declare results
               </button>
             )}
@@ -202,6 +230,14 @@ export function ExamDetailPage() {
                 {exam.status === "completed" ? "Withdraw results" : "Back to draft"}
               </button>
             )}
+            <button className="btn-ghost btn-sm" onClick={() => api(`/exams/${exam.id}`, { method: "PATCH", body: { isFinal: !exam.is_final } }).then(detail.reload)}>
+              {exam.is_final ? "Not the final exam" : "Mark as final exam"}
+            </button>
+            {exam.is_final && exam.status === "completed" && can("directory.manage") && (
+              <Link className="btn-ghost btn-sm" to={`/promotion?examId=${exam.id}`}>
+                <Icon name="trending" size={14} /> Promotion
+              </Link>
+            )}
             <button className="btn-danger btn-sm ml-auto" onClick={removeExam}>
               <Icon name="trash" size={14} /> Delete exam
             </button>
@@ -209,6 +245,11 @@ export function ExamDetailPage() {
         )}
       </div>
       <ErrorNote message={error} />
+      {promotion && (
+        <SuccessNote
+          message={`Promotion done: ${promotion.promoted} promoted, ${promotion.passedOut} passed out, ${promotion.supplementary} sent to supplementary exams, ${promotion.detained} kept in the same class${promotion.skipped.length ? `, ${promotion.skipped.length} left for you to decide (see Promotion)` : ""}.`}
+        />
+      )}
 
       {staff && (
         <div className="no-print">

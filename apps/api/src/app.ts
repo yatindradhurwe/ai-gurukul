@@ -32,6 +32,7 @@ import { academicsRouter } from "./modules/academics/routes.js";
 import { admissionsRouter, idCardsRouter, publicAdmissionsRouter } from "./modules/school/admissions.js";
 import { directoryRouter, MAX_UPLOAD_MB } from "./modules/school/directory.js";
 import { engagementRouter } from "./modules/school/engagement.js";
+import { promotionRouter } from "./modules/school/promotion.js";
 import { hrRouter } from "./modules/school/hr.js";
 import { eventsRouter, leaveRouter } from "./modules/school/leave.js";
 import { MAX_ATTACHMENT_MB, messagesRouter, ptmRouter } from "./modules/school/messaging.js";
@@ -104,6 +105,7 @@ export function createApp() {
   app.use("/api/v1/academics", tenantScoped, academicsRouter);
   app.use("/api/v1/directory", tenantScoped, directoryRouter);
   app.use("/api/v1/access", tenantScoped, accessRouter);
+  app.use("/api/v1/promotion", tenantScoped, promotionRouter);
   // Public (no sign-in): a school's online admission form.
   app.use("/api/v1/public/admissions", publicAdmissionsRouter);
 

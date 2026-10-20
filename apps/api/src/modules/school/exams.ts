@@ -7,6 +7,7 @@ import { asyncHandler, parse, requireAuth, requireTenant } from "../../lib/http.
 import { resolveStudent } from "../../lib/student-access.js";
 import { requirePermission } from "../../middleware/authorization.js";
 import { gradeFor, loadClass, roster, round1, visibleClassesSql } from "../lms/access.js";
+import { loadRules, runPlan } from "./promotion.js";
 
 export const examsRouter = Router();
 
@@ -55,6 +56,7 @@ const examSchema = z.object({
   startDate: date.nullish(),
   endDate: date.nullish(),
   instructions: z.string().trim().max(5000).default(""),
+  isFinal: z.boolean().default(false),
 });
 
 examsRouter.post(
@@ -67,7 +69,7 @@ examsRouter.post(
     if (body.startDate && body.endDate && body.endDate < body.startDate) throw badRequest("The exam ends before it starts");
     const row = await withTenant(tenant.id, async (db) => {
       const e = (
-        await db.query(`INSERT INTO exams (tenant_id, name, term, start_date, end_date, instructions, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [
+        await db.query(`INSERT INTO exams (tenant_id, name, term, start_date, end_date, instructions, created_by, is_final) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`, [
           tenant.id,
           body.name,
           body.term,
@@ -75,6 +77,7 @@ examsRouter.post(
           body.endDate ?? null,
           body.instructions,
           userId,
+          body.isFinal,
         ])
       ).rows[0];
       await audit(db, { tenantId: tenant.id, actorId: userId, action: "exam.create", resourceType: "exam", resourceId: e.id });
@@ -90,7 +93,7 @@ examsRouter.patch(
   asyncHandler(async (req, res) => {
     const tenant = requireTenant(req);
     const { userId } = requireAuth(req);
-    const body = parse(examSchema.partial().extend({ status: z.enum(["draft", "published", "completed"]).optional() }), req.body);
+    const body = parse(examSchema.partial().extend({ status: z.enum(["draft", "published", "completed"]).optional(), isFinal: z.boolean().optional() }), req.body);
     const row = await withTenant(tenant.id, async (db) => {
       const e = await loadExam(db, req.params.id);
       const start = body.startDate !== undefined ? body.startDate : e.start_date;
@@ -99,16 +102,21 @@ examsRouter.patch(
       const u = (
         await db.query(
           `UPDATE exams SET name = COALESCE($2, name), term = COALESCE($3, term), start_date = $4, end_date = $5,
-                  instructions = COALESCE($6, instructions), status = COALESCE($7, status) WHERE id = $1 RETURNING *`,
-          [e.id, body.name ?? null, body.term ?? null, start, end, body.instructions ?? null, body.status ?? null],
+                  instructions = COALESCE($6, instructions), status = COALESCE($7, status), is_final = COALESCE($8, is_final) WHERE id = $1 RETURNING *`,
+          [e.id, body.name ?? null, body.term ?? null, start, end, body.instructions ?? null, body.status ?? null, body.isFinal ?? null],
         )
       ).rows[0];
+      // Declaring a final exam's results promotes students automatically when the school has switched that on.
+      let promotion = null;
+      if (body.status === "completed" && e.status !== "completed" && u.is_final && !u.promotion_run_at && (await loadRules(db, tenant.id)).autoPromote) {
+        promotion = await runPlan(db, tenant.id, userId, e.id);
+      }
       // Keep the linked gradebook columns in the exam's term.
       if (body.term) await db.query(`UPDATE grade_items SET term = $2 WHERE id IN (SELECT grade_item_id FROM exam_papers WHERE exam_id = $1)`, [e.id, body.term]);
       if (body.status) await audit(db, { tenantId: tenant.id, actorId: userId, action: `exam.${body.status}`, resourceType: "exam", resourceId: e.id });
-      return u;
+      return { exam: promotion ? { ...u, promotion_run_at: new Date().toISOString() } : u, promotion };
     });
-    res.json({ exam: row });
+    res.json(row);
   }),
 );
 

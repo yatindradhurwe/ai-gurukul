@@ -88,6 +88,7 @@ export const NAV: NavGroup[] = [
     icon: "shield",
     items: [
       { to: "/directory", label: "School directory", icon: "users", hint: "Staff, classes 1–12, students, documents", show: (can) => can("directory.manage") },
+      { to: "/promotion", label: "Promotion", icon: "trending", hint: "Final results → next class, re-exams", show: (can) => can("directory.manage") },
       { to: "/academics/setup", label: "Academic setup", icon: "sliders", hint: "Year, holidays, syllabi, subjects", show: (can) => can("academics.manage") },
       { to: "/admissions", label: "Admissions", icon: "graduation", hint: "Enquiries to admitted students", show: (can) => can("admissions.manage") },
       { to: "/id-cards", label: "ID cards", icon: "file", hint: "Cards and certificates", show: (can) => can("admissions.manage") || can("members.manage") },
