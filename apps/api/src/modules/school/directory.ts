@@ -320,15 +320,7 @@ directoryRouter.get(
       ).rows[0];
       if (!cls) throw notFound("Class");
       await assertClassAccess(req, db, cls.id);
-      const subjects = (
-        await db.query(
-          `SELECT cs.id, cs.subject, cs.periods_per_week, cs.teacher_id, u.name AS teacher,
-                  (SELECT count(*)::int FROM syllabus_plan_items i WHERE i.class_subject_id = cs.id) AS units,
-                  (SELECT count(*)::int FROM syllabus_plan_items i WHERE i.class_subject_id = cs.id AND i.status = 'completed') AS units_done
-             FROM class_subjects cs LEFT JOIN users u ON u.id = cs.teacher_id WHERE cs.class_id = $1 ORDER BY cs.subject`,
-          [cls.id],
-        )
-      ).rows;
+      const subjects = await subjectDetails(db, cls);
       const students = (
         await db.query(
           `SELECT sp.id AS student_id, u.name, u.email, sp.admission_no, sp.guardian_name, sp.guardian_phone
@@ -373,6 +365,243 @@ directoryRouter.get(
       };
     });
     res.json(data);
+  }),
+);
+
+/** A class's subjects with teacher, prescribed books and syllabus chapters (with this class's plan status). */
+async function subjectDetails(db: Db, cls: { id: string; board: string | null; grade: string | null }) {
+  const subjects = (
+    await db.query(
+      `SELECT cs.id, cs.subject, cs.periods_per_week, cs.teacher_id, u.name AS teacher, cs.syllabus_id, sy.source AS syllabus_source,
+              (SELECT count(*)::int FROM syllabus_plan_items i WHERE i.class_subject_id = cs.id) AS units,
+              (SELECT count(*)::int FROM syllabus_plan_items i WHERE i.class_subject_id = cs.id AND i.status = 'completed') AS units_done
+         FROM class_subjects cs LEFT JOIN users u ON u.id = cs.teacher_id LEFT JOIN syllabi sy ON sy.id = cs.syllabus_id
+        WHERE cs.class_id = $1 ORDER BY cs.subject`,
+      [cls.id],
+    )
+  ).rows;
+  const units = (
+    await db.query(
+      `SELECT su.syllabus_id, su.id, su.sequence, su.title, su.topics, su.est_periods, su.term_sequence AS unit_term,
+              p.class_subject_id, p.status, p.planned_start, p.planned_end, p.completed_on, p.term_sequence
+         FROM syllabus_units su
+         JOIN class_subjects cs ON cs.syllabus_id = su.syllabus_id AND cs.class_id = $1
+         LEFT JOIN syllabus_plan_items p ON p.unit_id = su.id AND p.class_subject_id = cs.id
+        ORDER BY su.sequence`,
+      [cls.id],
+    )
+  ).rows;
+  const books = cls.grade ? await booksFor(db, cls.board, cls.grade) : [];
+  return subjects.map((sub) => ({
+    ...sub,
+    chapters: units.filter((u) => u.syllabus_id === sub.syllabus_id).map(({ syllabus_id: _s, class_subject_id: _c, ...u }) => ({ ...u, status: u.status ?? "planned" })),
+    books: books.filter((b) => b.subject.toLowerCase() === sub.subject.toLowerCase()),
+  }));
+}
+
+async function booksFor(db: Db, board: string | null, grade: string) {
+  return (
+    await db.query(
+      `SELECT b.*, lb.title AS library_title, lb.shelf AS library_shelf,
+              (lb.total_copies - (SELECT count(*)::int FROM library_loans l WHERE l.book_id = lb.id AND l.returned_at IS NULL)) AS library_available
+         FROM subject_books b LEFT JOIN library_books lb ON lb.id = b.library_book_id
+        WHERE lower(b.grade) = lower($2) AND (b.board IS NULL OR $1::text IS NULL OR lower(b.board) = lower($1))
+        ORDER BY b.subject, b.sequence, b.title`,
+      [board, grade],
+    )
+  ).rows;
+}
+
+// ---------------------------------------------------------------------------
+// Setting up Class 1–12 and their sections
+// ---------------------------------------------------------------------------
+
+/** A typical CBSE / state-board subject list for a grade; the principal can change it before creating. */
+export function defaultSubjects(grade: number): string[] {
+  if (grade <= 2) return ["English", "Hindi", "Mathematics"];
+  if (grade <= 5) return ["English", "Hindi", "Mathematics", "EVS"];
+  if (grade <= 8) return ["English", "Hindi", "Sanskrit", "Mathematics", "Science", "Social Science"];
+  if (grade <= 10) return ["English", "Hindi", "Mathematics", "Science", "Social Science"];
+  return ["English", "Physics", "Chemistry", "Mathematics", "Biology"];
+}
+
+directoryRouter.get(
+  "/default-subjects",
+  requirePermission("directory.manage"),
+  (_req, res) => {
+    res.json({ subjects: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, defaultSubjects(i + 1)])) });
+  },
+);
+
+directoryRouter.post(
+  "/classes/setup",
+  requirePermission("directory.manage"),
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const { userId } = requireAuth(req);
+    const b = parse(
+      z.object({
+        grades: z.array(z.number().int().min(1).max(12)).min(1).max(12),
+        sections: z.array(z.string().trim().min(1).max(10)).min(1).max(12),
+        board: z.string().trim().max(60).default("CBSE"),
+        classTeacherId: z.string().uuid().nullish(),
+        subjects: z.record(z.string(), z.array(z.string().trim().min(1).max(80)).max(20)).default({}),
+      }),
+      req.body,
+    );
+    const result = await withTenant(tenant.id, async (db) => {
+      await checkTeacher(db, tenant.id, b.classTeacherId);
+      const year = (await db.query(`SELECT id FROM academic_years WHERE is_current LIMIT 1`)).rows[0]?.id ?? null;
+      let created = 0;
+      let subjectsAdded = 0;
+      const skipped: string[] = [];
+      for (const g of [...new Set(b.grades)].sort((x, y) => x - y)) {
+        const grade = `Class ${g}`;
+        for (const section of [...new Set(b.sections.map((x) => x.toUpperCase()))]) {
+          const name = `${g}-${section}`;
+          const exists = await db.query(`SELECT 1 FROM classes WHERE (lower(grade) = lower($1) AND lower(section) = lower($2)) OR lower(name) = lower($3)`, [grade, section, name]);
+          if (exists.rowCount) {
+            skipped.push(name);
+            continue;
+          }
+          const c = (
+            await db.query(`INSERT INTO classes (tenant_id, name, teacher_id, board, grade, section, academic_year_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`, [
+              tenant.id, name, b.classTeacherId ?? userId, b.board || null, grade, section, year,
+            ])
+          ).rows[0];
+          created++;
+          for (const subject of [...new Set(b.subjects[String(g)] ?? defaultSubjects(g))]) {
+            const syl = (
+              await db.query(`SELECT id FROM syllabi WHERE lower(board) = lower($1) AND lower(grade) = lower($2) AND lower(subject) = lower($3) ORDER BY academic_year_id IS NULL LIMIT 1`, [b.board, grade, subject])
+            ).rows[0]?.id;
+            await db.query(`INSERT INTO class_subjects (tenant_id, class_id, subject, syllabus_id) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [tenant.id, c.id, subject, syl ?? null]);
+            subjectsAdded++;
+          }
+        }
+      }
+      await audit(db, { tenantId: tenant.id, actorId: userId, action: "classes.setup", metadata: { grades: b.grades, sections: b.sections, created } });
+      return { created, subjects: subjectsAdded, skipped };
+    });
+    res.status(201).json(result);
+  }),
+);
+
+directoryRouter.patch(
+  "/classes/:id",
+  requirePermission("directory.manage"),
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const b = parse(z.object({ name: z.string().trim().min(1).max(80).optional(), classTeacherId: z.string().uuid().optional() }), req.body);
+    const row = await withTenant(tenant.id, async (db) => {
+      await checkTeacher(db, tenant.id, b.classTeacherId);
+      const r = await db.query(`UPDATE classes SET name = COALESCE($2, name), teacher_id = COALESCE($3, teacher_id) WHERE id = $1 RETURNING id, name, teacher_id`, [req.params.id, b.name ?? null, b.classTeacherId ?? null]);
+      if (!r.rowCount) throw notFound("Class");
+      return r.rows[0];
+    });
+    res.json({ class: row });
+  }),
+);
+
+/** Remove a section created by mistake; only while no students are enrolled. */
+directoryRouter.delete(
+  "/classes/:id",
+  requirePermission("directory.manage"),
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const { userId } = requireAuth(req);
+    await withTenant(tenant.id, async (db) => {
+      const c = (await db.query(`SELECT id, name, (SELECT count(*)::int FROM class_enrollments e WHERE e.class_id = classes.id) AS students FROM classes WHERE id = $1`, [req.params.id])).rows[0];
+      if (!c) throw notFound("Class");
+      if (c.students) throw badRequest(`${c.name} has ${c.students} students; move them to another section first`);
+      const used = await db.query(`SELECT 1 FROM live_sessions WHERE class_id = $1 UNION ALL SELECT 1 FROM exam_papers WHERE class_id = $1 UNION ALL SELECT 1 FROM grade_items WHERE class_id = $1 LIMIT 1`, [c.id]);
+      if (used.rowCount) throw badRequest(`${c.name} already has lessons, exams or marks and can't be deleted`);
+      await db.query(`DELETE FROM classes WHERE id = $1`, [c.id]);
+      await audit(db, { tenantId: tenant.id, actorId: userId, action: "class.delete", resourceType: "class", resourceId: c.id, metadata: { name: c.name } });
+    });
+    res.status(204).end();
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// Prescribed books per grade and subject
+// ---------------------------------------------------------------------------
+const bookSchema = z.object({
+  board: z.string().trim().max(60).nullish(),
+  grade: z.string().trim().min(1).max(40),
+  subject: z.string().trim().min(1).max(80),
+  title: z.string().trim().min(1).max(200),
+  kind: z.enum(["textbook", "workbook", "reference", "lab_manual", "other"]).default("textbook"),
+  author: z.string().trim().max(160).default(""),
+  publisher: z.string().trim().max(160).default(""),
+  isbn: z.string().trim().max(20).nullish(),
+  note: z.string().trim().max(500).default(""),
+  libraryBookId: z.string().uuid().nullish(),
+  sequence: z.number().int().min(1).max(99).default(1),
+});
+const canEditBooks = requirePermission("directory.manage", "academics.manage");
+
+directoryRouter.get(
+  "/books",
+  requirePermission("directory.manage", "classes.manage"),
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const q = parse(z.object({ grade: z.string().trim().max(40).optional() }), req.query);
+    const rows = await withTenant(tenant.id, (db) =>
+      q.grade ? booksFor(db, null, q.grade) : db.query(`SELECT * FROM subject_books ORDER BY grade, subject, sequence, title`).then((r) => r.rows),
+    );
+    res.json({ books: rows });
+  }),
+);
+
+directoryRouter.post(
+  "/books",
+  canEditBooks,
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const b = parse(bookSchema, req.body);
+    const row = await withTenant(tenant.id, async (db) => {
+      if (b.libraryBookId && !(await db.query(`SELECT 1 FROM library_books WHERE id = $1`, [b.libraryBookId])).rowCount) throw notFound("Library book");
+      return (
+        await db.query(
+          `INSERT INTO subject_books (tenant_id, board, grade, subject, title, kind, author, publisher, isbn, note, library_book_id, sequence)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+          [tenant.id, b.board || null, b.grade, b.subject, b.title, b.kind, b.author, b.publisher, b.isbn || null, b.note, b.libraryBookId ?? null, b.sequence],
+        )
+      ).rows[0];
+    });
+    res.status(201).json({ book: row });
+  }),
+);
+
+directoryRouter.put(
+  "/books/:id",
+  canEditBooks,
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const b = parse(bookSchema, req.body);
+    const row = await withTenant(tenant.id, async (db) => {
+      const r = await db.query(
+        `UPDATE subject_books SET board = $2, grade = $3, subject = $4, title = $5, kind = $6, author = $7, publisher = $8, isbn = $9, note = $10, library_book_id = $11, sequence = $12
+          WHERE id = $1 RETURNING *`,
+        [req.params.id, b.board || null, b.grade, b.subject, b.title, b.kind, b.author, b.publisher, b.isbn || null, b.note, b.libraryBookId ?? null, b.sequence],
+      );
+      if (!r.rowCount) throw notFound("Book");
+      return r.rows[0];
+    });
+    res.json({ book: row });
+  }),
+);
+
+directoryRouter.delete(
+  "/books/:id",
+  canEditBooks,
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    await withTenant(tenant.id, async (db) => {
+      const r = await db.query(`DELETE FROM subject_books WHERE id = $1`, [req.params.id]);
+      if (!r.rowCount) throw notFound("Book");
+    });
+    res.status(204).end();
   }),
 );
 

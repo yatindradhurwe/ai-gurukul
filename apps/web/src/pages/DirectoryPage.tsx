@@ -179,16 +179,24 @@ function StaffDirectory() {
 
 function ClassGrid() {
   const list = useApi<any>("/directory/classes");
+  const [setup, setSetup] = useState<number[] | null>(null);
   const by = groupByGrade<any>(list.data?.classes ?? []);
   const other = by.get(null) ?? [];
   if (list.loading && !list.data) return <Spinner />;
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <button className="btn" onClick={() => setSetup(GRADES)}>
+          <Icon name="plus" size={16} /> Set up classes and sections
+        </button>
+        <p className="text-sm text-slate-500">Create sections (A, B, C…) for any of Class 1 to 12, each with its subjects. Existing sections are left as they are.</p>
+      </div>
       <ErrorNote message={list.error} />
       {GRADES.map((g) => (
-        <GradeRow key={g} label={`Class ${g}`} id={`grade-${g}`} classes={by.get(g) ?? []} />
+        <GradeRow key={g} label={`Class ${g}`} id={`grade-${g}`} classes={by.get(g) ?? []} onAdd={() => setSetup([g])} />
       ))}
       {other.length > 0 && <GradeRow label="Other classes and batches" id="grade-other" classes={other} />}
+      {setup && <SetupClasses grades={setup} existing={list.data?.classes ?? []} onClose={() => setSetup(null)} onDone={list.reload} />}
       <p className="text-xs text-slate-500">
         Sections are placed by their grade from <Link className="text-brand" to="/academics/setup">Academic setup</Link>, or by a name that starts with the class number (for example "8-A").
       </p>
@@ -196,7 +204,7 @@ function ClassGrid() {
   );
 }
 
-function GradeRow({ label, id, classes }: { label: string; id: string; classes: any[] }) {
+function GradeRow({ label, id, classes, onAdd }: { label: string; id: string; classes: any[]; onAdd?: () => void }) {
   const students = classes.reduce((t, c) => t + c.students, 0);
   return (
     <section id={id} className="card scroll-mt-24">
@@ -204,9 +212,16 @@ function GradeRow({ label, id, classes }: { label: string; id: string; classes: 
         <h2 className="section-title">
           <Icon name="graduation" size={16} className="text-brand" /> {label}
         </h2>
-        <span className="text-xs text-slate-500">
-          {classes.length} section{classes.length === 1 ? "" : "s"} · {students} student{students === 1 ? "" : "s"}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-500">
+            {classes.length} section{classes.length === 1 ? "" : "s"} · {students} student{students === 1 ? "" : "s"}
+          </span>
+          {onAdd && (
+            <button className="btn-ghost btn-sm" onClick={onAdd}>
+              <Icon name="plus" size={14} /> Add section
+            </button>
+          )}
+        </div>
       </div>
       {!classes.length ? (
         <p className="text-sm text-slate-400">No sections yet.</p>
@@ -242,6 +257,130 @@ function ClassCard({ c, extra }: { c: any; extra?: ReactNode }) {
       )}
       {extra}
     </Link>
+  );
+}
+
+function SetupClasses({ grades: initial, existing, onClose, onDone }: { grades: number[]; existing: any[]; onClose: () => void; onDone: () => void }) {
+  const defaults = useApi<any>("/directory/default-subjects");
+  const staff = useApi<any>("/directory/staff");
+  const single = initial.length === 1;
+  const nextSection = single ? String.fromCharCode(65 + existing.filter((c) => c.grade_number === initial[0]).length) : "A, B";
+  const [grades, setGrades] = useState<number[]>(initial);
+  const [sections, setSections] = useState(nextSection);
+  const [board, setBoard] = useState("CBSE");
+  const [teacherId, setTeacherId] = useState("");
+  const [subjects, setSubjects] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const subjectsFor = (g: number) => subjects[g] ?? (defaults.data?.subjects[g] ?? []).join(", ");
+  // Grades share a subject list in bands, so edit one list per band rather than twelve.
+  const bands = [
+    { label: "Class 1–2", grades: [1, 2] },
+    { label: "Class 3–5", grades: [3, 4, 5] },
+    { label: "Class 6–8", grades: [6, 7, 8] },
+    { label: "Class 9–10", grades: [9, 10] },
+    { label: "Class 11–12", grades: [11, 12] },
+  ].filter((b) => b.grades.some((g) => grades.includes(g)));
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    try {
+      const list = (v: string) => v.split(",").map((x) => x.trim()).filter(Boolean);
+      const r = await api("/directory/classes/setup", {
+        body: {
+          grades,
+          sections: list(sections),
+          board,
+          classTeacherId: teacherId || null,
+          subjects: Object.fromEntries(grades.map((g) => [String(g), list(subjectsFor(g))])),
+        },
+      });
+      setDone(`${r.created} section${r.created === 1 ? "" : "s"} created with ${r.subjects} subjects.${r.skipped.length ? ` Already there: ${r.skipped.join(", ")}.` : ""}`);
+      onDone();
+    } catch (x) {
+      setErr((x as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal open onClose={onClose} title={single ? `Add a section to Class ${initial[0]}` : "Set up classes and sections"} wide>
+      {done ? (
+        <div className="space-y-4">
+          <SuccessNote message={done} />
+          <p className="text-sm text-slate-500">Next, assign subject teachers and books on each section's page, and link syllabi in Academic setup.</p>
+          <div className="flex justify-end">
+            <button className="btn" onClick={onClose}>
+              Done
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form className="space-y-4" onSubmit={submit}>
+          {!single && (
+            <div>
+              <span className="label">Classes</span>
+              <div className="flex flex-wrap gap-1.5">
+                {GRADES.map((g) => {
+                  const on = grades.includes(g);
+                  return (
+                    <button
+                      type="button"
+                      key={g}
+                      onClick={() => setGrades(on ? grades.filter((x) => x !== g) : [...grades, g].sort((a, b) => a - b))}
+                      className={`h-9 w-9 rounded-xl text-sm font-semibold ring-1 transition ${on ? "bg-brand text-white ring-brand" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"}`}
+                    >
+                      {g}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="Sections" hint="Comma-separated, e.g. A, B, C">
+              <input className="input" required value={sections} onChange={(e) => setSections(e.target.value)} />
+            </Field>
+            <Field label="Board">
+              <input className="input" value={board} onChange={(e) => setBoard(e.target.value)} />
+            </Field>
+            <Field label="Class teacher" hint="Change it per section later">
+              <select className="input" value={teacherId} onChange={(e) => setTeacherId(e.target.value)}>
+                <option value="">Me (for now)</option>
+                {(staff.data?.staff ?? []).map((s: any) => (
+                  <option key={s.user_id} value={s.user_id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div className="space-y-3">
+            <span className="label">Subjects</span>
+            {bands.map((b) => (
+              <Field key={b.label} label={b.label}>
+                <input
+                  className="input"
+                  value={subjectsFor(b.grades.find((g) => grades.includes(g))!)}
+                  onChange={(e) => setSubjects({ ...subjects, ...Object.fromEntries(b.grades.map((g) => [g, e.target.value])) })}
+                />
+              </Field>
+            ))}
+          </div>
+          <ErrorNote message={err} />
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn" disabled={busy || !grades.length}>
+              {busy ? "Creating…" : "Create sections"}
+            </button>
+          </div>
+        </form>
+      )}
+    </Modal>
   );
 }
 
@@ -491,8 +630,11 @@ function DirectorySettings() {
 // ---------------------------------------------------------------------------
 export function DirectoryClassPage() {
   const { id } = useParams();
+  const { can } = useAuth();
+  const admin = can("directory.manage");
   const d = useApi<any>(`/directory/classes/${id}`);
-  const [tab, setTab] = useState<"students" | "report" | "exams">("students");
+  const [tab, setTab] = useState<"subjects" | "students" | "report" | "exams">("subjects");
+  const [editing, setEditing] = useState(false);
   if (d.loading && !d.data) return <Spinner />;
   if (!d.data) return <ErrorNote message={d.error} />;
   const { class: c, subjects, students, report, exams } = d.data;
@@ -504,9 +646,16 @@ export function DirectoryClassPage() {
         icon="graduation"
         subtitle={[c.grade_number ? `Class ${c.grade_number}` : null, c.section ? `Section ${c.section}` : null, c.board, c.academic_year].filter(Boolean).join(" · ") || "Class"}
         action={
-          <Link className="btn-ghost" to={`/report-card`}>
-            <Icon name="printer" size={16} /> Report cards
-          </Link>
+          <>
+            <Link className="btn-ghost" to={`/report-card`}>
+              <Icon name="printer" size={16} /> Report cards
+            </Link>
+            {admin && (
+              <button className="btn-ghost" onClick={() => setEditing(true)}>
+                <Icon name="sliders" size={16} /> Edit section
+              </button>
+            )}
+          </>
         }
       />
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -515,46 +664,385 @@ export function DirectoryClassPage() {
         <StatCard label="Class average" value={pct100(report.average)} icon="chart" tone={toneForPercent(report.average)} hint="Across the gradebook" />
         <StatCard label="Homework handed in" value={report.assignments.expected ? pct100((report.assignments.submissions / report.assignments.expected) * 100) : "—"} icon="clipboard" tone="sky" hint={`${report.assignments.total} assignments`} />
       </div>
-      <SectionCard title="Subjects and teachers" icon="book">
-        {!subjects.length ? (
-          <p className="text-sm text-slate-500">
-            No subjects yet. Add them in <Link className="text-brand" to="/academics/setup">Academic setup</Link>.
-          </p>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {subjects.map((s: any) => (
-              <div key={s.id} className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
-                <div className="flex items-center justify-between">
-                  <p className="font-semibold text-slate-900">{s.subject}</p>
-                  <span className="text-xs text-slate-500">{s.periods_per_week}/week</span>
-                </div>
-                <p className="text-xs text-slate-500">{s.teacher ?? "No teacher assigned"}</p>
-                {s.units > 0 && (
-                  <div className="mt-2">
-                    <Progress value={(s.units_done / s.units) * 100} tone="green" />
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      Syllabus {s.units_done}/{s.units} units
-                    </p>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </SectionCard>
       <Tabs
         value={tab}
         onChange={setTab}
         options={[
+          { value: "subjects", label: `Subjects & books (${subjects.length})` },
           { value: "students", label: `Students (${students.length})` },
           { value: "report", label: "Class report" },
           { value: "exams", label: `Exam reports (${exams.length})` },
         ]}
       />
+      {tab === "subjects" && <SubjectList cls={c} subjects={subjects} onChange={d.reload} />}
       {tab === "students" && <StudentTable rows={students} showClasses={false} />}
+      {editing && <EditSection c={c} onClose={() => setEditing(false)} onSaved={d.reload} />}
       {tab === "report" && <ClassReport items={report.gradeItems} />}
       {tab === "exams" && <ExamReports exams={exams} students={students} />}
     </div>
+  );
+}
+
+const BOOK_KINDS: Record<string, string> = { textbook: "Textbook", workbook: "Workbook", reference: "Reference", lab_manual: "Lab manual", other: "Other" };
+const CHAPTER_TONE: Record<string, Tone> = { completed: "green", in_progress: "amber", planned: "slate" };
+
+function SubjectList({ cls, subjects, onChange }: { cls: any; subjects: any[]; onChange: () => void }) {
+  const { can } = useAuth();
+  const admin = can("directory.manage");
+  const staff = useApi<any>(admin ? "/directory/staff" : null);
+  const [adding, setAdding] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const addSubject = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    try {
+      await api(`/academics/classes/${cls.id}/subjects`, { body: { subject: adding.trim() } });
+      setAdding("");
+      onChange();
+    } catch (x) {
+      setErr((x as Error).message);
+    }
+  };
+  return (
+    <div className="space-y-4">
+      {!subjects.length && <Empty title="No subjects yet" icon="book">{admin ? "Add the subjects taught in this section below." : "The principal hasn't added subjects to this section yet."}</Empty>}
+      {subjects.map((s) => (
+        <SubjectCard key={s.id} cls={cls} s={s} admin={admin} teachers={staff.data?.staff ?? []} onChange={onChange} />
+      ))}
+      {admin && (
+        <form className="card flex flex-wrap items-end gap-2" onSubmit={addSubject}>
+          <Field label="Add a subject">
+            <input className="input min-w-[14rem]" value={adding} placeholder="e.g. Computer Science" onChange={(e) => setAdding(e.target.value)} />
+          </Field>
+          <button className="btn" disabled={!adding.trim()}>
+            <Icon name="plus" size={16} /> Add
+          </button>
+          <div className="w-full">
+            <ErrorNote message={err} />
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function SubjectCard({ cls, s, admin, teachers, onChange }: { cls: any; s: any; admin: boolean; teachers: any[]; onChange: () => void }) {
+  const { can } = useAuth();
+  const editBooks = can("directory.manage") || can("academics.manage");
+  const [open, setOpen] = useState(false);
+  const [book, setBook] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const done = s.chapters.filter((u: any) => u.status === "completed").length;
+  const current = s.chapters.find((u: any) => u.status !== "completed");
+  const run = async (fn: () => Promise<unknown>) => {
+    setErr(null);
+    try {
+      await fn();
+      onChange();
+    } catch (x) {
+      setErr((x as Error).message);
+    }
+  };
+  return (
+    <section className="card animate-fade-up">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-soft text-brand">
+            <Icon name="book" size={20} />
+          </span>
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900">{s.subject}</h3>
+            <p className="text-sm text-slate-500">
+              {s.teacher ?? "No teacher assigned"} · {s.periods_per_week} periods a week
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {admin && (
+            <select
+              className="input w-auto"
+              value={s.teacher_id ?? ""}
+              aria-label={`Teacher for ${s.subject}`}
+              onChange={(e) => run(() => api(`/academics/class-subjects/${s.id}`, { method: "PATCH", body: { teacherId: e.target.value || null } }))}
+            >
+              <option value="">No teacher</option>
+              {teachers
+                .filter((t) => t.roles.some((r: string) => ["teacher", "tenant_admin", "tenant_owner"].includes(r)))
+                .map((t) => (
+                  <option key={t.user_id} value={t.user_id}>
+                    {t.name}
+                  </option>
+                ))}
+            </select>
+          )}
+          {s.units > 0 && (
+            <Link className="btn-ghost btn-sm" to={`/academics/plan/${s.id}`}>
+              <Icon name="calendar" size={14} /> Syllabus plan
+            </Link>
+          )}
+          {admin && (
+            <button className="btn-danger btn-sm" aria-label={`Remove ${s.subject}`} onClick={() => confirm(`Remove ${s.subject} from ${cls.name}? Its syllabus plan for this section is deleted too.`) && run(() => api(`/academics/class-subjects/${s.id}`, { method: "DELETE" }))}>
+              <Icon name="trash" size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+      <ErrorNote message={err} />
+      <div className="mt-4 grid gap-5 lg:grid-cols-2">
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="label mb-0">Books</p>
+            {editBooks && cls.grade && (
+              <button className="text-xs font-semibold text-brand" onClick={() => setBook({})}>
+                + Add book
+              </button>
+            )}
+          </div>
+          {!s.books.length ? (
+            <p className="text-sm text-slate-500">{cls.grade ? `No books listed for ${cls.grade} ${s.subject}.` : "Set this section's grade in Academic setup to list books."}</p>
+          ) : (
+            <ul className="space-y-2">
+              {s.books.map((b: any) => (
+                <li key={b.id} className="flex items-start gap-3 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
+                  <span className="mt-0.5 text-amber-600">
+                    <Icon name="book" size={18} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-slate-900">{b.title}</p>
+                    <p className="text-xs text-slate-500">
+                      {[BOOK_KINDS[b.kind], b.author, b.publisher, b.isbn && `ISBN ${b.isbn}`].filter(Boolean).join(" · ")}
+                    </p>
+                    {b.note && <p className="mt-1 text-xs text-slate-600">{b.note}</p>}
+                    {b.library_book_id && (
+                      <p className="mt-1 text-xs">
+                        <Badge tone={b.library_available > 0 ? "green" : "red"}>
+                          Library: {b.library_available > 0 ? `${b.library_available} available` : "all issued"}
+                          {b.library_shelf && ` · shelf ${b.library_shelf}`}
+                        </Badge>
+                      </p>
+                    )}
+                  </div>
+                  {editBooks && (
+                    <button className="btn-ghost btn-sm" onClick={() => setBook(b)} aria-label={`Edit ${b.title}`}>
+                      <Icon name="sliders" size={14} />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-2 text-[11px] text-slate-400">Books are shared by every section of {cls.grade ?? "this class"}.</p>
+        </div>
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="label mb-0">Syllabus</p>
+            {s.chapters.length > 0 && (
+              <span className="text-xs text-slate-500">
+                {done}/{s.chapters.length} chapters done
+              </span>
+            )}
+          </div>
+          {!s.chapters.length ? (
+            <p className="text-sm text-slate-500">
+              No syllabus linked.{" "}
+              {can("academics.manage") && (
+                <Link className="text-brand" to="/academics/setup">
+                  Add one in Academic setup
+                </Link>
+              )}
+            </p>
+          ) : (
+            <>
+              <Progress value={(done / s.chapters.length) * 100} tone="green" />
+              {current && (
+                <p className="mt-2 text-xs text-slate-600">
+                  Now: <span className="font-semibold">{current.title}</span>
+                  {current.planned_end && ` · due ${fmtDate(current.planned_end)}`}
+                </p>
+              )}
+              {s.syllabus_source && <p className="mt-1 text-[11px] text-slate-400">{s.syllabus_source}</p>}
+              <button className="mt-2 text-xs font-semibold text-brand" onClick={() => setOpen(!open)}>
+                {open ? "Hide chapters" : `Show all ${s.chapters.length} chapters`}
+              </button>
+              {open && (
+                <ol className="mt-2 divide-y divide-slate-100 text-sm">
+                  {s.chapters.map((u: any) => (
+                    <li key={u.id} className="flex items-start justify-between gap-3 py-2">
+                      <div className="min-w-0">
+                        <p className="font-medium text-slate-900">
+                          {u.sequence}. {u.title}
+                        </p>
+                        {u.topics && <p className="text-xs text-slate-500">{u.topics}</p>}
+                        <p className="text-[11px] text-slate-400">
+                          {u.planned_start ? `${fmtDate(u.planned_start)} – ${fmtDate(u.planned_end)}` : "Not scheduled"}
+                          {u.term_sequence && ` · Term ${u.term_sequence}`} · {u.est_periods} periods
+                        </p>
+                      </div>
+                      <Badge tone={CHAPTER_TONE[u.status]}>{u.status.replace("_", " ")}</Badge>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      {book && <BookForm book={book} cls={cls} subject={s.subject} onClose={() => setBook(null)} onSaved={onChange} />}
+    </section>
+  );
+}
+
+function BookForm({ book, cls, subject, onClose, onSaved }: { book: any; cls: any; subject: string; onClose: () => void; onSaved: () => void }) {
+  const library = useApi<any>("/library/books");
+  const [f, setF] = useState({
+    title: book.title ?? "",
+    kind: book.kind ?? "textbook",
+    author: book.author ?? "",
+    publisher: book.publisher ?? "",
+    isbn: book.isbn ?? "",
+    note: book.note ?? "",
+    libraryBookId: book.library_book_id ?? "",
+    sequence: book.sequence ?? 1,
+  });
+  const [err, setErr] = useState<string | null>(null);
+  const body = { ...f, grade: book.grade ?? cls.grade, subject: book.subject ?? subject, board: book.id ? book.board : null, libraryBookId: f.libraryBookId || null, isbn: f.isbn || null };
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await api(book.id ? `/directory/books/${book.id}` : "/directory/books", { method: book.id ? "PUT" : "POST", body });
+      onSaved();
+      onClose();
+    } catch (x) {
+      setErr((x as Error).message);
+    }
+  };
+  const remove = async () => {
+    if (!confirm(`Remove ${book.title} from ${body.grade} ${body.subject}?`)) return;
+    try {
+      await api(`/directory/books/${book.id}`, { method: "DELETE" });
+      onSaved();
+      onClose();
+    } catch (x) {
+      setErr((x as Error).message);
+    }
+  };
+  const books: any[] = library.data?.books ?? [];
+  return (
+    <Modal open onClose={onClose} title={book.id ? "Edit book" : `Add a book · ${body.grade} ${body.subject}`}>
+      <form className="space-y-3" onSubmit={submit}>
+        <Field label="Title">
+          <input className="input" required value={f.title} placeholder="e.g. Science — Textbook for Class VIII" onChange={(e) => setF({ ...f, title: e.target.value })} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Type">
+            <select className="input" value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })}>
+              {Object.entries(BOOK_KINDS).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Publisher">
+            <input className="input" value={f.publisher} placeholder="NCERT" onChange={(e) => setF({ ...f, publisher: e.target.value })} />
+          </Field>
+          <Field label="Author">
+            <input className="input" value={f.author} onChange={(e) => setF({ ...f, author: e.target.value })} />
+          </Field>
+          <Field label="ISBN">
+            <input className="input" value={f.isbn} onChange={(e) => setF({ ...f, isbn: e.target.value })} />
+          </Field>
+        </div>
+        <Field label="Library copy" hint="Link a library title to show how many copies are available">
+          <select className="input" value={f.libraryBookId} onChange={(e) => setF({ ...f, libraryBookId: e.target.value })}>
+            <option value="">Not in the library</option>
+            {books.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.title}
+                {b.author && ` — ${b.author}`}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Note">
+          <input className="input" value={f.note} placeholder="e.g. Chapters 1–8 for Term 1" onChange={(e) => setF({ ...f, note: e.target.value })} />
+        </Field>
+        <ErrorNote message={err} />
+        <div className="flex justify-between gap-2">
+          {book.id ? (
+            <button type="button" className="btn-danger" onClick={remove}>
+              <Icon name="trash" size={14} /> Remove
+            </button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn">Save</button>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EditSection({ c, onClose, onSaved }: { c: any; onClose: () => void; onSaved: () => void }) {
+  const staff = useApi<any>("/directory/staff");
+  const [name, setName] = useState(c.name);
+  const [teacherId, setTeacherId] = useState(c.teacher_id);
+  const [err, setErr] = useState<string | null>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await api(`/directory/classes/${c.id}`, { method: "PATCH", body: { name, classTeacherId: teacherId } });
+      onSaved();
+      onClose();
+    } catch (x) {
+      setErr((x as Error).message);
+    }
+  };
+  const remove = async () => {
+    if (!confirm(`Delete section ${c.name}? Only empty sections can be deleted.`)) return;
+    try {
+      await api(`/directory/classes/${c.id}`, { method: "DELETE" });
+      history.back();
+    } catch (x) {
+      setErr((x as Error).message);
+    }
+  };
+  return (
+    <Modal open onClose={onClose} title={`Edit ${c.name}`}>
+      <form className="space-y-3" onSubmit={submit}>
+        <Field label="Name">
+          <input className="input" required value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label="Class teacher">
+          <select className="input" value={teacherId} onChange={(e) => setTeacherId(e.target.value)}>
+            {!(staff.data?.staff ?? []).some((s: any) => s.user_id === teacherId) && <option value={teacherId}>{c.class_teacher}</option>}
+            {(staff.data?.staff ?? []).map((s: any) => (
+              <option key={s.user_id} value={s.user_id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <p className="text-xs text-slate-500">Board, grade, section and academic year are set in Academic setup.</p>
+        <ErrorNote message={err} />
+        <div className="flex justify-between gap-2">
+          <button type="button" className="btn-danger" onClick={remove}>
+            <Icon name="trash" size={14} /> Delete section
+          </button>
+          <div className="flex gap-2">
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn">Save</button>
+          </div>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -1647,7 +2135,7 @@ export function MyClassesPage() {
                         )}
                         <div className="mt-3 flex flex-wrap gap-1.5">
                           <Link className="btn-ghost btn-sm" to={`/directory/classes/${s.class_id}`}>
-                            Students & reports
+                            Books, syllabus & students
                           </Link>
                           <Link className="btn-ghost btn-sm" to={`/academics/plan/${s.id}`}>
                             Syllabus plan

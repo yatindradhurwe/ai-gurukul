@@ -139,6 +139,36 @@ describe.skipIf(!dbAvailable)("school directory", () => {
     await api.delete(teacher, `/api/v1/directory/activities/${pt.id}/members/${profile[s1.userId]}`).expect(204);
   });
 
+  it("sets up Class 1–12 sections with subjects, books and syllabus chapters", async () => {
+    const r = (await api.post(owner, "/api/v1/directory/classes/setup", { grades: [6, 8], sections: ["a", "B"], board: "CBSE", subjects: { "8": ["Science", "Mathematics"] } }).expect(201)).body;
+    // 8-A already exists (grade "Class 8", section A), so it is skipped.
+    expect(r.created).toBe(3);
+    expect(r.skipped).toEqual(["8-A"]);
+    await api.post(teacher, "/api/v1/directory/classes/setup", { grades: [1], sections: ["A"] }).expect(403);
+    const all = (await api.get(owner, "/api/v1/directory/classes").expect(200)).body.classes;
+    const c8b = all.find((c: any) => c.name === "8-B");
+    expect(c8b.subjects.map((s: any) => s.subject)).toEqual(["Mathematics", "Science"]);
+    expect(all.find((c: any) => c.name === "6-A").subjects).toHaveLength(6);
+
+    // A syllabus for Class 8 Science and a textbook shared by every Class 8 section.
+    await sql(`UPDATE class_subjects SET teacher_id = $2 WHERE class_id = $1 AND subject = 'Science'`, [c8b.id, teacher.userId]);
+    const syl = (await sql(`INSERT INTO syllabi (tenant_id, board, grade, subject) VALUES ($1,'CBSE','Class 8','Science') RETURNING id`, [schoolId])).rows[0].id;
+    await sql(`INSERT INTO syllabus_units (tenant_id, syllabus_id, title, sequence) VALUES ($1,$2,'Crop production',1), ($1,$2,'Microorganisms',2)`, [schoolId, syl]);
+    await sql(`UPDATE class_subjects SET syllabus_id = $2 WHERE class_id = $1 AND subject = 'Science'`, [c8b.id, syl]);
+    await api.post(owner, "/api/v1/directory/books", { grade: "Class 8", subject: "Science", title: "Science Textbook for Class VIII", publisher: "NCERT" }).expect(201);
+    await api.post(teacher, "/api/v1/directory/books", { grade: "Class 8", subject: "Science", title: "x" }).expect(403);
+
+    const detail = (await api.get(teacher, `/api/v1/directory/classes/${c8b.id}`).expect(200)).body;
+    const sci = detail.subjects.find((s: any) => s.subject === "Science");
+    expect(sci.books.map((b: any) => b.title)).toEqual(["Science Textbook for Class VIII"]);
+    expect(sci.chapters.map((u: any) => [u.title, u.status])).toEqual([["Crop production", "planned"], ["Microorganisms", "planned"]]);
+    expect(detail.subjects.find((s: any) => s.subject === "Mathematics").books).toEqual([]);
+
+    await api.patch(owner, `/api/v1/directory/classes/${c8b.id}`, { classTeacherId: teacher.userId }).expect(200);
+    await api.delete(owner, `/api/v1/directory/classes/${class8}`).expect(400); // has students
+    await api.delete(owner, `/api/v1/directory/classes/${all.find((c: any) => c.name === "6-B").id}`).expect(204);
+  });
+
   it("keeps the directory inside the organization", async () => {
     const outsider = await register("parent", "Elsewhere");
     expect([403, 404]).toContain((await api.get(outsider, `/api/v1/directory/students/${profile[s1.userId]}`)).status);
