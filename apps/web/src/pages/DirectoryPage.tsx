@@ -30,7 +30,7 @@ const groupByGrade = <T extends { grade_number: number | null }>(rows: T[]) => {
 // ---------------------------------------------------------------------------
 // Principal / admin: the school directory
 // ---------------------------------------------------------------------------
-type Tab = "overview" | "staff" | "classes" | "students" | "activities" | "documents" | "settings";
+type Tab = "overview" | "staff" | "classes" | "books" | "students" | "activities" | "documents" | "settings";
 
 export function DirectoryPage() {
   const [params, setParams] = useSearchParams();
@@ -46,6 +46,7 @@ export function DirectoryPage() {
             { value: "overview", label: "Overview" },
             { value: "staff", label: "Teachers & staff" },
             { value: "classes", label: "Classes 1–12" },
+            { value: "books", label: "Books" },
             { value: "students", label: "Students" },
             { value: "activities", label: "Sports & activities" },
             { value: "documents", label: "Documents" },
@@ -56,6 +57,7 @@ export function DirectoryPage() {
       {tab === "overview" && <Overview />}
       {tab === "staff" && <StaffDirectory />}
       {tab === "classes" && <ClassGrid />}
+      {tab === "books" && <BookCatalogue />}
       {tab === "students" && <StudentList />}
       {tab === "activities" && <ActivityList />}
       {tab === "documents" && <AllDocuments />}
@@ -261,13 +263,15 @@ function ClassCard({ c, extra }: { c: any; extra?: ReactNode }) {
 }
 
 function SetupClasses({ grades: initial, existing, onClose, onDone }: { grades: number[]; existing: any[]; onClose: () => void; onDone: () => void }) {
-  const defaults = useApi<any>("/directory/default-subjects");
+  const [board, setBoard] = useState("CBSE");
+  const [statePublisher, setStatePublisher] = useState("");
+  const [importBooks, setImportBooks] = useState(true);
+  const defaults = useApi<any>(`/directory/default-subjects?board=${encodeURIComponent(board)}`);
   const staff = useApi<any>("/directory/staff");
   const single = initial.length === 1;
   const nextSection = single ? String.fromCharCode(65 + existing.filter((c) => c.grade_number === initial[0]).length) : "A, B";
   const [grades, setGrades] = useState<number[]>(initial);
   const [sections, setSections] = useState(nextSection);
-  const [board, setBoard] = useState("CBSE");
   const [teacherId, setTeacherId] = useState("");
   const [subjects, setSubjects] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -293,11 +297,15 @@ function SetupClasses({ grades: initial, existing, onClose, onDone }: { grades: 
           grades,
           sections: list(sections),
           board,
+          importBooks,
+          statePublisher,
           classTeacherId: teacherId || null,
           subjects: Object.fromEntries(grades.map((g) => [String(g), list(subjectsFor(g))])),
         },
       });
-      setDone(`${r.created} section${r.created === 1 ? "" : "s"} created with ${r.subjects} subjects.${r.skipped.length ? ` Already there: ${r.skipped.join(", ")}.` : ""}`);
+      setDone(
+        `${r.created} section${r.created === 1 ? "" : "s"} created with ${r.subjects} subjects${importBooks ? ` and ${r.books} new books` : ""}.${r.skipped.length ? ` Already there: ${r.skipped.join(", ")}.` : ""}`,
+      );
       onDone();
     } catch (x) {
       setErr((x as Error).message);
@@ -344,7 +352,13 @@ function SetupClasses({ grades: initial, existing, onClose, onDone }: { grades: 
               <input className="input" required value={sections} onChange={(e) => setSections(e.target.value)} />
             </Field>
             <Field label="Board">
-              <input className="input" value={board} onChange={(e) => setBoard(e.target.value)} />
+              <BoardSelect
+                value={board}
+                onChange={(v) => {
+                  setBoard(v);
+                  setSubjects({});
+                }}
+              />
             </Field>
             <Field label="Class teacher" hint="Change it per section later">
               <select className="input" value={teacherId} onChange={(e) => setTeacherId(e.target.value)}>
@@ -357,6 +371,18 @@ function SetupClasses({ grades: initial, existing, onClose, onDone }: { grades: 
               </select>
             </Field>
           </div>
+          <label className="flex items-start gap-3 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
+            <input type="checkbox" className="mt-1 h-4 w-4 accent-brand" checked={importBooks} onChange={(e) => setImportBooks(e.target.checked)} />
+            <span className="text-sm">
+              <span className="font-semibold text-slate-900">Add the board's books</span>
+              <span className="block text-xs text-slate-500">{BOARD_HINT[board]}</span>
+            </span>
+          </label>
+          {importBooks && board === "State Board" && (
+            <Field label="State textbook publisher" hint="e.g. Maharashtra State Bureau (Balbharati), Tamil Nadu Textbook Corporation, Karnataka Textbook Society">
+              <input className="input" value={statePublisher} onChange={(e) => setStatePublisher(e.target.value)} />
+            </Field>
+          )}
           <div className="space-y-3">
             <span className="label">Subjects</span>
             {bands.map((b) => (
@@ -376,6 +402,226 @@ function SetupClasses({ grades: initial, existing, onClose, onDone }: { grades: 
             </button>
             <button className="btn" disabled={busy || !grades.length}>
               {busy ? "Creating…" : "Create sections"}
+            </button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+export const BOARD_OPTIONS = [
+  { id: "CBSE", label: "CBSE (NCERT books)" },
+  { id: "ICSE", label: "ICSE / ISC (CISCE)" },
+  { id: "State Board", label: "State Board" },
+];
+const BOARD_HINT: Record<string, string> = {
+  CBSE: "NCERT textbooks for every subject from Class 1 to 12.",
+  ICSE: "Widely used ICSE / ISC books for Class 6 to 12 (CISCE prescribes no books below Class 6). Confirm them against your school's list.",
+  "State Board": "One textbook per subject from your state's textbook board. Set the exact titles afterwards.",
+};
+
+function BoardSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const known = BOARD_OPTIONS.some((b) => b.id === value);
+  return (
+    <select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
+      {BOARD_OPTIONS.map((b) => (
+        <option key={b.id} value={b.id}>
+          {b.label}
+        </option>
+      ))}
+      {!known && <option value={value}>{value}</option>}
+    </select>
+  );
+}
+
+function BookCatalogue() {
+  const { can } = useAuth();
+  const edit = can("directory.manage") || can("academics.manage");
+  const list = useApi<any>("/directory/books");
+  const [grade, setGrade] = useState("all");
+  const [board, setBoard] = useState("all");
+  const [importing, setImporting] = useState(false);
+  const [book, setBook] = useState<any>(null);
+  const all: any[] = list.data?.books ?? [];
+  const boards = [...new Set(all.map((b) => b.board ?? "Any board"))];
+  const rows = all.filter((b) => (grade === "all" || b.grade === grade) && (board === "all" || (b.board ?? "Any board") === board));
+  const byGrade = new Map<string, Map<string, any[]>>();
+  for (const b of rows) {
+    const g = byGrade.get(b.grade) ?? new Map<string, any[]>();
+    g.set(b.subject, [...(g.get(b.subject) ?? []), b]);
+    byGrade.set(b.grade, g);
+  }
+  const num = (g: string) => Number(g.match(/\d+/)?.[0] ?? 99);
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        {edit && (
+          <>
+            <button className="btn" onClick={() => setImporting(true)}>
+              <Icon name="book" size={16} /> Add a board's books
+            </button>
+            <button className="btn-ghost" onClick={() => setBook({ grade: "Class 1", subject: "" })}>
+              <Icon name="plus" size={16} /> Add one book
+            </button>
+          </>
+        )}
+        <select className="input w-auto" value={grade} onChange={(e) => setGrade(e.target.value)} aria-label="Class">
+          <option value="all">All classes</option>
+          {GRADES.map((g) => (
+            <option key={g} value={`Class ${g}`}>
+              Class {g}
+            </option>
+          ))}
+        </select>
+        <select className="input w-auto" value={board} onChange={(e) => setBoard(e.target.value)} aria-label="Board">
+          <option value="all">All boards</option>
+          {boards.map((b) => (
+            <option key={b}>{b}</option>
+          ))}
+        </select>
+        <span className="text-sm text-slate-500">{rows.length} books</span>
+      </div>
+      <ErrorNote message={list.error} />
+      {list.loading && !list.data ? (
+        <Spinner />
+      ) : !rows.length ? (
+        <Empty title="No books yet" icon="book">
+          Add a board's book list (CBSE / NCERT, ICSE / ISC or State Board) for the classes you run, then edit it to match your school's list.
+        </Empty>
+      ) : (
+        [...byGrade.entries()]
+          .sort((a, b) => num(a[0]) - num(b[0]))
+          .map(([g, subjects]) => (
+            <SectionCard key={g} title={g} icon="graduation">
+              <div className="grid gap-4 md:grid-cols-2">
+                {[...subjects.entries()].map(([subject, books]) => (
+                  <div key={subject}>
+                    <p className="label">{subject}</p>
+                    <ul className="space-y-1.5">
+                      {books.map((b) => (
+                        <li key={b.id} className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200/70">
+                          <Icon name="book" size={15} className="mt-0.5 shrink-0 text-amber-600" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-slate-900">{b.title}</p>
+                            <p className="text-xs text-slate-500">{[BOOK_KINDS[b.kind], b.author, b.publisher, b.board].filter(Boolean).join(" · ")}</p>
+                            {b.note && <p className="text-[11px] text-slate-400">{b.note}</p>}
+                          </div>
+                          {edit && (
+                            <button className="btn-ghost btn-sm" onClick={() => setBook(b)} aria-label={`Edit ${b.title}`}>
+                              <Icon name="sliders" size={13} />
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+          ))
+      )}
+      {importing && <ImportBooks onClose={() => setImporting(false)} onDone={list.reload} />}
+      {book && <BookForm book={book} onClose={() => setBook(null)} onSaved={list.reload} />}
+    </div>
+  );
+}
+
+function ImportBooks({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [board, setBoard] = useState("CBSE");
+  const [grades, setGrades] = useState<number[]>(GRADES);
+  const [statePublisher, setStatePublisher] = useState("");
+  const [preview, setPreview] = useState(8);
+  const sample = useApi<any>(`/directory/book-catalogue?board=${encodeURIComponent(board)}&grade=${preview}&statePublisher=${encodeURIComponent(statePublisher)}`);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api("/directory/books/import", { body: { board, grades, statePublisher } });
+      setDone(r.added ? `${r.added} books added. Books you already had were left as they were.` : "Nothing new to add — these books are already on your list.");
+      onDone();
+    } catch (x) {
+      setErr((x as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal open onClose={onClose} title="Add a board's books" wide>
+      {done ? (
+        <div className="space-y-4">
+          <SuccessNote message={done} />
+          <div className="flex justify-end">
+            <button className="btn" onClick={onClose}>
+              Done
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form className="space-y-4" onSubmit={submit}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Board">
+              <BoardSelect value={board} onChange={setBoard} />
+            </Field>
+            {board === "State Board" && (
+              <Field label="State textbook publisher">
+                <input className="input" value={statePublisher} placeholder="e.g. Maharashtra State Bureau (Balbharati)" onChange={(e) => setStatePublisher(e.target.value)} />
+              </Field>
+            )}
+          </div>
+          <p className="text-xs text-slate-500">{BOARD_HINT[board]}</p>
+          <div>
+            <span className="label">Classes</span>
+            <div className="flex flex-wrap gap-1.5">
+              {GRADES.map((g) => {
+                const on = grades.includes(g);
+                return (
+                  <button
+                    type="button"
+                    key={g}
+                    onClick={() => setGrades(on ? grades.filter((x) => x !== g) : [...grades, g].sort((a, b) => a - b))}
+                    className={`h-9 w-9 rounded-xl text-sm font-semibold ring-1 transition ${on ? "bg-brand text-white ring-brand" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"}`}
+                  >
+                    {g}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="label mb-0">Preview</span>
+              <select className="input w-auto py-1 text-xs" value={preview} onChange={(e) => setPreview(Number(e.target.value))}>
+                {GRADES.map((g) => (
+                  <option key={g} value={g}>
+                    Class {g}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {!sample.data?.books.length ? (
+              <p className="text-sm text-slate-500">No built-in books for this class and board.</p>
+            ) : (
+              <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">
+                {sample.data.books.map((b: any, i: number) => (
+                  <li key={i}>
+                    <span className="text-slate-500">{b.subject}:</span> <span className="font-medium text-slate-900">{b.title}</span> <span className="text-xs text-slate-400">· {b.publisher}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <ErrorNote message={err} />
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn" disabled={busy || !grades.length}>
+              {busy ? "Adding…" : `Add books for ${grades.length} class${grades.length === 1 ? "" : "es"}`}
             </button>
           </div>
         </form>
@@ -887,14 +1133,17 @@ function SubjectCard({ cls, s, admin, teachers, onChange }: { cls: any; s: any; 
           )}
         </div>
       </div>
-      {book && <BookForm book={book} cls={cls} subject={s.subject} onClose={() => setBook(null)} onSaved={onChange} />}
+      {book && <BookForm book={{ grade: cls.grade, subject: s.subject, board: cls.board, ...book }} onClose={() => setBook(null)} onSaved={onChange} />}
     </section>
   );
 }
 
-function BookForm({ book, cls, subject, onClose, onSaved }: { book: any; cls: any; subject: string; onClose: () => void; onSaved: () => void }) {
+function BookForm({ book, onClose, onSaved }: { book: any; onClose: () => void; onSaved: () => void }) {
   const library = useApi<any>("/library/books");
   const [f, setF] = useState({
+    grade: book.grade ?? "Class 1",
+    subject: book.subject ?? "",
+    board: book.board ?? "",
     title: book.title ?? "",
     kind: book.kind ?? "textbook",
     author: book.author ?? "",
@@ -905,7 +1154,7 @@ function BookForm({ book, cls, subject, onClose, onSaved }: { book: any; cls: an
     sequence: book.sequence ?? 1,
   });
   const [err, setErr] = useState<string | null>(null);
-  const body = { ...f, grade: book.grade ?? cls.grade, subject: book.subject ?? subject, board: book.id ? book.board : null, libraryBookId: f.libraryBookId || null, isbn: f.isbn || null };
+  const body = { ...f, board: f.board || null, libraryBookId: f.libraryBookId || null, isbn: f.isbn || null };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     try {
@@ -928,8 +1177,32 @@ function BookForm({ book, cls, subject, onClose, onSaved }: { book: any; cls: an
   };
   const books: any[] = library.data?.books ?? [];
   return (
-    <Modal open onClose={onClose} title={book.id ? "Edit book" : `Add a book · ${body.grade} ${body.subject}`}>
+    <Modal open onClose={onClose} title={book.id ? "Edit book" : "Add a book"}>
       <form className="space-y-3" onSubmit={submit}>
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Class">
+            <select className="input" value={f.grade} onChange={(e) => setF({ ...f, grade: e.target.value })}>
+              {!GRADES.some((g) => `Class ${g}` === f.grade) && <option>{f.grade}</option>}
+              {GRADES.map((g) => (
+                <option key={g}>Class {g}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Subject">
+            <input className="input" required value={f.subject} placeholder="Science" onChange={(e) => setF({ ...f, subject: e.target.value })} />
+          </Field>
+          <Field label="Board">
+            <select className="input" value={f.board} onChange={(e) => setF({ ...f, board: e.target.value })}>
+              <option value="">Any board</option>
+              {BOARD_OPTIONS.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.id}
+                </option>
+              ))}
+              {f.board && !BOARD_OPTIONS.some((b) => b.id === f.board) && <option>{f.board}</option>}
+            </select>
+          </Field>
+        </div>
         <Field label="Title">
           <input className="input" required value={f.title} placeholder="e.g. Science — Textbook for Class VIII" onChange={(e) => setF({ ...f, title: e.target.value })} />
         </Field>

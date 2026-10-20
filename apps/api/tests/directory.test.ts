@@ -2,6 +2,7 @@
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { liveHub } from "../src/modules/live/events.js";
+import { catalogue, defaultSubjects } from "../src/modules/school/book-catalogue.js";
 import { gradeNumber } from "../src/modules/school/directory.js";
 import { api, app, dbAvailable, login, register, resetDb, sql, uniqueEmail, type Session } from "./helpers.js";
 
@@ -12,6 +13,21 @@ describe("grade numbers", () => {
     expect(gradeNumber(null, "Class 3 Rose")).toBe(3);
     expect(gradeNumber(null, "Chess club")).toBeNull();
     expect(gradeNumber("Nursery", "Nursery A")).toBeNull();
+  });
+});
+
+describe("built-in book lists", () => {
+  it("has books for every default subject of each board", () => {
+    for (let g = 1; g <= 12; g++) {
+      for (const board of ["CBSE", "State Board"]) {
+        const subjects = new Set(catalogue(board, g).map((b) => b.subject));
+        for (const s of defaultSubjects(g, board)) expect(subjects, `${board} class ${g} ${s}`).toContain(s);
+      }
+      // ICSE: CISCE prescribes no books below Class 6, and Hindi in Class 6–8 varies by school.
+      if (g >= 9) for (const s of defaultSubjects(g, "ICSE")) expect(new Set(catalogue("ICSE", g).map((b) => b.subject)), `ICSE class ${g} ${s}`).toContain(s);
+    }
+    expect(catalogue("CBSE", 8).find((b) => b.subject === "Science")?.title).toBe("Curiosity — Class VIII");
+    expect(catalogue("State Board", 4, "Maharashtra State Bureau")[0].publisher).toBe("Maharashtra State Bureau");
   });
 });
 
@@ -140,7 +156,7 @@ describe.skipIf(!dbAvailable)("school directory", () => {
   });
 
   it("sets up Class 1–12 sections with subjects, books and syllabus chapters", async () => {
-    const r = (await api.post(owner, "/api/v1/directory/classes/setup", { grades: [6, 8], sections: ["a", "B"], board: "CBSE", subjects: { "8": ["Science", "Mathematics"] } }).expect(201)).body;
+    const r = (await api.post(owner, "/api/v1/directory/classes/setup", { grades: [6, 8], sections: ["a", "B"], board: "CBSE", subjects: { "8": ["Science", "Mathematics"] }, importBooks: false }).expect(201)).body;
     // 8-A already exists (grade "Class 8", section A), so it is skipped.
     expect(r.created).toBe(3);
     expect(r.skipped).toEqual(["8-A"]);
@@ -166,6 +182,15 @@ describe.skipIf(!dbAvailable)("school directory", () => {
 
     await api.patch(owner, `/api/v1/directory/classes/${c8b.id}`, { classTeacherId: teacher.userId }).expect(200);
     await api.delete(owner, `/api/v1/directory/classes/${class8}`).expect(400); // has students
+
+    // The board's built-in book lists: importing twice adds nothing new.
+    const imported = (await api.post(owner, "/api/v1/directory/books/import", { board: "CBSE", grades: [8] }).expect(201)).body.added;
+    expect(imported).toBe(6);
+    expect((await api.post(owner, "/api/v1/directory/books/import", { board: "CBSE", grades: [8] }).expect(201)).body.added).toBe(0);
+    await api.post(owner, "/api/v1/directory/books/import", { board: "ICSE", grades: [8] }).expect(201);
+    const after = (await api.get(teacher, `/api/v1/directory/classes/${c8b.id}`).expect(200)).body;
+    // 8-B follows CBSE, so ICSE books don't show; the hand-added book still does.
+    expect(after.subjects.find((s: any) => s.subject === "Science").books.map((b: any) => b.title)).toEqual(["Science Textbook for Class VIII", "Curiosity — Class VIII"]);
     await api.delete(owner, `/api/v1/directory/classes/${all.find((c: any) => c.name === "6-B").id}`).expect(204);
   });
 

@@ -8,6 +8,7 @@ import { STAFF_ROLES } from "../../lib/permissions.js";
 import { requirePermission } from "../../middleware/authorization.js";
 import { gradeFor, round1 } from "../lms/access.js";
 import { ATTENDED_SQL, COUNTED_SQL } from "../lms/attendance.js";
+import { BOARDS, catalogue, defaultSubjects } from "./book-catalogue.js";
 import { summarise, type PaperRow } from "./exams.js";
 
 /**
@@ -416,20 +417,12 @@ async function booksFor(db: Db, board: string | null, grade: string) {
 // Setting up Class 1–12 and their sections
 // ---------------------------------------------------------------------------
 
-/** A typical CBSE / state-board subject list for a grade; the principal can change it before creating. */
-export function defaultSubjects(grade: number): string[] {
-  if (grade <= 2) return ["English", "Hindi", "Mathematics"];
-  if (grade <= 5) return ["English", "Hindi", "Mathematics", "EVS"];
-  if (grade <= 8) return ["English", "Hindi", "Sanskrit", "Mathematics", "Science", "Social Science"];
-  if (grade <= 10) return ["English", "Hindi", "Mathematics", "Science", "Social Science"];
-  return ["English", "Physics", "Chemistry", "Mathematics", "Biology"];
-}
-
 directoryRouter.get(
   "/default-subjects",
   requirePermission("directory.manage"),
-  (_req, res) => {
-    res.json({ subjects: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, defaultSubjects(i + 1)])) });
+  (req, res) => {
+    const board = typeof req.query.board === "string" ? req.query.board : "CBSE";
+    res.json({ boards: BOARDS, subjects: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, defaultSubjects(i + 1, board)])) });
   },
 );
 
@@ -446,6 +439,8 @@ directoryRouter.post(
         board: z.string().trim().max(60).default("CBSE"),
         classTeacherId: z.string().uuid().nullish(),
         subjects: z.record(z.string(), z.array(z.string().trim().min(1).max(80)).max(20)).default({}),
+        importBooks: z.boolean().default(true),
+        statePublisher: z.string().trim().max(120).default(""),
       }),
       req.body,
     );
@@ -470,7 +465,7 @@ directoryRouter.post(
             ])
           ).rows[0];
           created++;
-          for (const subject of [...new Set(b.subjects[String(g)] ?? defaultSubjects(g))]) {
+          for (const subject of [...new Set(b.subjects[String(g)] ?? defaultSubjects(g, b.board))]) {
             const syl = (
               await db.query(`SELECT id FROM syllabi WHERE lower(board) = lower($1) AND lower(grade) = lower($2) AND lower(subject) = lower($3) ORDER BY academic_year_id IS NULL LIMIT 1`, [b.board, grade, subject])
             ).rows[0]?.id;
@@ -479,8 +474,9 @@ directoryRouter.post(
           }
         }
       }
-      await audit(db, { tenantId: tenant.id, actorId: userId, action: "classes.setup", metadata: { grades: b.grades, sections: b.sections, created } });
-      return { created, subjects: subjectsAdded, skipped };
+      const books = b.importBooks ? await importBooks(db, tenant.id, b.board, b.grades, b.statePublisher) : 0;
+      await audit(db, { tenantId: tenant.id, actorId: userId, action: "classes.setup", metadata: { grades: b.grades, sections: b.sections, created, books } });
+      return { created, subjects: subjectsAdded, skipped, books };
     });
     res.status(201).json(result);
   }),
@@ -539,6 +535,55 @@ const bookSchema = z.object({
   sequence: z.number().int().min(1).max(99).default(1),
 });
 const canEditBooks = requirePermission("directory.manage", "academics.manage");
+
+/** Add a board's built-in book list for the given grades, skipping books the school already has. */
+async function importBooks(db: Db, tenantId: string, board: string, grades: number[], statePublisher: string) {
+  let added = 0;
+  for (const g of new Set(grades)) {
+    const grade = `Class ${g}`;
+    const list = catalogue(board, g, statePublisher);
+    for (let i = 0; i < list.length; i++) {
+      const bk = list[i];
+      const r = await db.query(
+        `INSERT INTO subject_books (tenant_id, board, grade, subject, title, kind, author, publisher, note, sequence)
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10
+          WHERE NOT EXISTS (SELECT 1 FROM subject_books WHERE lower(grade) = lower($3) AND lower(subject) = lower($4) AND lower(title) = lower($5)
+                              AND COALESCE(lower(board), '') = COALESCE(lower($2), ''))`,
+        [tenantId, board, grade, bk.subject, bk.title, bk.kind, bk.author, bk.publisher, bk.note, i + 1],
+      );
+      added += r.rowCount ?? 0;
+    }
+  }
+  return added;
+}
+
+directoryRouter.get(
+  "/book-catalogue",
+  requirePermission("directory.manage", "academics.manage"),
+  asyncHandler(async (req, res) => {
+    const q = parse(z.object({ board: z.string().trim().max(60).default("CBSE"), grade: z.coerce.number().int().min(1).max(12), statePublisher: z.string().trim().max(120).default("") }), req.query);
+    res.json({ boards: BOARDS, books: catalogue(q.board, q.grade, q.statePublisher) });
+  }),
+);
+
+directoryRouter.post(
+  "/books/import",
+  canEditBooks,
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const { userId } = requireAuth(req);
+    const b = parse(
+      z.object({ board: z.string().trim().min(1).max(60), grades: z.array(z.number().int().min(1).max(12)).min(1).max(12), statePublisher: z.string().trim().max(120).default("") }),
+      req.body,
+    );
+    const added = await withTenant(tenant.id, async (db) => {
+      const n = await importBooks(db, tenant.id, b.board, b.grades, b.statePublisher);
+      await audit(db, { tenantId: tenant.id, actorId: userId, action: "books.import", metadata: { ...b, added: n } });
+      return n;
+    });
+    res.status(201).json({ added });
+  }),
+);
 
 directoryRouter.get(
   "/books",
