@@ -28,6 +28,7 @@ describe.skipIf(!dbAvailable)("promotion after final results", () => {
   let c7: string;
   let c8: string;
   const kids: Record<string, string> = {};
+  const sessions: Record<string, Session> = {};
 
   beforeAll(async () => {
     await resetDb();
@@ -44,7 +45,10 @@ describe.skipIf(!dbAvailable)("promotion after final results", () => {
       return s;
     };
     teacher = await join("teacher", "Meera Teacher");
-    for (const n of ["Asha Pass", "Bala Supply", "Chitra Fail"]) kids[n] = (await api.get(await join("student", n), "/api/v1/tenants/current").expect(200)).body.studentProfileId;
+    for (const n of ["Asha Pass", "Bala Supply", "Chitra Fail"]) {
+      sessions[n] = await join("student", n);
+      kids[n] = (await api.get(sessions[n], "/api/v1/tenants/current").expect(200)).body.studentProfileId;
+    }
     await api.post(owner, "/api/v1/directory/classes/setup", { grades: [7, 8], sections: ["A"], importBooks: false }).expect(201);
     const classes = (await api.get(owner, "/api/v1/directory/classes").expect(200)).body.classes;
     c7 = classes.find((c: any) => c.name === "7-A").id;
@@ -104,6 +108,15 @@ describe.skipIf(!dbAvailable)("promotion after final results", () => {
     const open = (await api.get(owner, "/api/v1/promotion/supplementary").expect(200)).body.supplementary;
     expect(open).toHaveLength(1);
     expect(open[0]).toMatchObject({ student: "Bala Supply", subject: "Maths", original_marks: 20, target_class: "8-A" });
+    // Scheduled ahead: parent and student both see when and where.
+    const when = { ids: [open[0].id], examDate: "2027-05-10", startTime: "10:00", room: "Hall B" };
+    await api.post(parent, "/api/v1/promotion/supplementary/schedule", when).expect(403);
+    expect((await api.post(owner, "/api/v1/promotion/supplementary/schedule", when).expect(200)).body.updated).toBe(1);
+    const fromParent = (await api.get(parent, "/api/v1/dashboard").expect(200)).body.children[0].supplementary[0];
+    expect(fromParent).toMatchObject({ subject: "Maths", exam_date: "2027-05-10", start_time: "10:00", room: "Hall B" });
+    const own = (await api.get(sessions["Bala Supply"], "/api/v1/dashboard").expect(200)).body.student.standing;
+    expect(own.supplementary[0]).toMatchObject({ exam_date: "2027-05-10", room: "Hall B" });
+
     await api.put(owner, `/api/v1/promotion/supplementary/${open[0].id}`, { marks: 101 }).expect(400);
     const r = (await api.put(owner, `/api/v1/promotion/supplementary/${open[0].id}`, { marks: 41 }).expect(200)).body;
     expect(r).toEqual({ status: "passed", result: "promoted" });

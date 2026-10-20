@@ -4,6 +4,7 @@ import { Icon, type IconName } from "../components/icons";
 import { Avatar, Badge, Donut, Empty, ErrorNote, Progress, SectionCard, Spinner, StatCard, fmtDate, fmtDateTime, inr, pct100, toneForPercent } from "../components/ui";
 import { BadgeShelf, CelebrationToast, GoalsCard, Leaderboard, LevelCard, useCelebrations, type Engagement } from "../components/Rewards";
 import { useAuth } from "../lib/auth";
+import { useRealtime } from "../lib/realtime";
 import { useApi } from "../lib/useApi";
 
 const greeting = () => {
@@ -80,7 +81,7 @@ const YEAR_RESULT: Record<string, { label: string; tone: "green" | "amber" | "re
 };
 
 /** A child's promotion picture for parents: re-exams due, a decision pending, and each year's result. */
-function ChildStanding({ c }: { c: any }) {
+function ChildStanding({ c, self = false }: { c: any; self?: boolean }) {
   const [more, setMore] = useState(false);
   const supp: any[] = c.supplementary ?? [];
   const years: any[] = c.promotions ?? [];
@@ -101,7 +102,11 @@ function ChildStanding({ c }: { c: any }) {
                   {x.pass_marks != null && ` (pass ${x.pass_marks})`}
                 </span>
                 {x.status === "pending" ? (
-                  <Badge tone="amber">{x.exam_date ? `on ${fmtDate(x.exam_date)}` : "date to be announced"}</Badge>
+                  <Badge tone="amber">
+                    {x.exam_date
+                      ? `${fmtDate(x.exam_date, { weekday: "short", day: "numeric", month: "short" })}${x.start_time ? ` · ${x.start_time}` : ""}${x.room ? ` · ${x.room}` : ""}`
+                      : "date to be announced"}
+                  </Badge>
                 ) : (
                   <Badge tone={x.status === "passed" ? "green" : "red"}>{x.status === "absent" ? "absent" : `${x.status} · ${x.marks}/${x.max_marks}`}</Badge>
                 )}
@@ -109,13 +114,15 @@ function ChildStanding({ c }: { c: any }) {
             ))}
           </ul>
           <p className="mt-1.5 text-[11px] text-amber-800">
-            Clearing every re-exam promotes {c.name.split(" ")[0]} to {supp[0].target_class ?? "the next class"}; otherwise they stay in {supp[0].class_name}.
+            {self
+              ? `Clear every re-exam to move up to ${supp[0].target_class ?? "the next class"}; otherwise you stay in ${supp[0].class_name}. You can do it!`
+              : `Clearing every re-exam promotes ${c.name.split(" ")[0]} to ${supp[0].target_class ?? "the next class"}; otherwise they stay in ${supp[0].class_name}.`}
           </p>
         </div>
       )}
       {!supp.length && c.awaitingPromotion && (
         <div className="rounded-xl bg-sky-50 p-3 text-xs text-sky-900 ring-1 ring-sky-200">
-          <span className="font-semibold">{c.awaitingPromotion}</span> results are out. The school will confirm promotion soon.
+          <span className="font-semibold">{c.awaitingPromotion}</span> results are out. The school will confirm {self ? "your" : "the"} promotion soon.
         </div>
       )}
       {latest && (
@@ -157,6 +164,8 @@ function ChildStanding({ c }: { c: any }) {
 export function DashboardPage() {
   const { user, can, tenant, info } = useAuth();
   const dash = useApi<any>("/dashboard");
+  // Re-exam scheduled or marked, or a promotion decided: refresh right away.
+  useRealtime("notify", (e) => e.module === "promotion" && dash.reload());
   const isStudent = !!info?.studentProfileId;
   const reward = useApi<Engagement>(isStudent ? "/engagement/me" : null);
   const { news: toast, dismiss } = useCelebrations(reward.data);
@@ -422,6 +431,12 @@ export function DashboardPage() {
                   </li>
                 ))}
               </ul>
+            </SectionCard>
+          )}
+
+          {student?.standing && (student.standing.supplementary.length > 0 || student.standing.awaitingPromotion || student.standing.promotions.length > 0) && (
+            <SectionCard title="My promotion" icon="trending">
+              <ChildStanding c={{ ...student.standing, name: user?.name ?? "" }} self />
             </SectionCard>
           )}
 

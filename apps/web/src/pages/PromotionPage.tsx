@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/icons";
-import { Badge, Empty, ErrorNote, Field, InfoNote, PageTitle, SectionCard, Spinner, StatCard, SuccessNote, Tabs, pct100, toneForPercent, type Tone } from "../components/ui";
+import { Badge, Empty, ErrorNote, Field, InfoNote, PageTitle, SectionCard, Spinner, StatCard, SuccessNote, Tabs, fmtDate, pct100, toneForPercent, type Tone } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/useApi";
@@ -264,6 +264,16 @@ function Supplementary() {
     <div className="space-y-4">
       <ErrorNote message={err ?? list.error} />
       <SuccessNote message={msg} />
+      {rows.some((r) => r.status === "pending") && (
+        <ScheduleBySubject
+          rows={rows.filter((r) => r.status === "pending")}
+          onSaved={(n) => {
+            setMsg(`Scheduled for ${n} student${n === 1 ? "" : "s"}. They and their parents see it on their dashboards now.`);
+            list.reload();
+          }}
+          onError={setErr}
+        />
+      )}
       {!rows.length ? (
         <Empty title="No supplementary exams pending" icon="check">
           Students who failed in a few subjects of the final exam appear here for a re-exam.
@@ -288,6 +298,7 @@ function Supplementary() {
                       <td className="pl-5 font-medium text-slate-900">
                         {r.subject}
                         <span className="block text-xs text-slate-500">{r.exam}</span>
+                        <span className={`block text-xs ${r.exam_date ? "text-brand" : "text-amber-600"}`}>{when(r)}</span>
                       </td>
                       <td className="text-right">
                         {r.original_marks ?? "—"}/{r.max_marks}
@@ -321,6 +332,74 @@ function Supplementary() {
         ))
       )}
     </div>
+  );
+}
+
+const when = (r: any) =>
+  r.exam_date
+    ? `${fmtDate(r.exam_date, { weekday: "short", day: "numeric", month: "short" })}${r.start_time ? ` · ${String(r.start_time).slice(0, 5)}` : ""}${r.room ? ` · ${r.room}` : ""}`
+    : "Not scheduled yet";
+
+/** One date, time and room for every student re-sitting the same subject. */
+function ScheduleBySubject({ rows, onSaved, onError }: { rows: any[]; onSaved: (n: number) => void; onError: (m: string | null) => void }) {
+  const groups = new Map<string, any[]>();
+  for (const r of rows) groups.set(`${r.exam_id}:${r.subject}`, [...(groups.get(`${r.exam_id}:${r.subject}`) ?? []), r]);
+  const [form, setForm] = useState<Record<string, { date: string; time: string; room: string }>>({});
+  const save = async (key: string, items: any[]) => {
+    const f = form[key];
+    onError(null);
+    try {
+      const r = await api("/promotion/supplementary/schedule", { body: { ids: items.map((x) => x.id), examDate: f.date, startTime: f.time || null, room: f.room || null } });
+      onSaved(r.updated);
+    } catch (x) {
+      onError((x as Error).message);
+    }
+  };
+  return (
+    <SectionCard title="Schedule re-exams" icon="calendar">
+      <div className="-mx-5 overflow-x-auto">
+        <table className="table">
+          <thead>
+            <tr>
+              <th className="pl-5">Subject</th>
+              <th>Students</th>
+              <th>Now</th>
+              <th className="pr-5">Set date, time and room</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...groups.entries()].map(([key, items]) => {
+              const first = items[0];
+              const same = items.every((x) => x.exam_date === first.exam_date && x.start_time === first.start_time && x.room === first.room);
+              const f = form[key] ?? { date: first.exam_date ?? "", time: first.start_time ? String(first.start_time).slice(0, 5) : "", room: first.room ?? "" };
+              const set = (patch: Partial<typeof f>) => setForm({ ...form, [key]: { ...f, ...patch } });
+              return (
+                <tr key={key}>
+                  <td className="pl-5">
+                    <p className="font-semibold text-slate-900">{first.subject}</p>
+                    <p className="text-xs text-slate-500">{first.exam}</p>
+                  </td>
+                  <td className="max-w-[14rem] text-xs text-slate-600">
+                    <span className="font-semibold text-slate-900">{items.length}</span> · {items.map((x) => x.student).join(", ")}
+                  </td>
+                  <td className="text-xs">{same ? when(first) : "Different dates"}</td>
+                  <td className="pr-5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <input className="input w-36 py-1" type="date" value={f.date} onChange={(e) => set({ date: e.target.value })} aria-label={`${first.subject} date`} />
+                      <input className="input w-24 py-1" type="time" value={f.time} onChange={(e) => set({ time: e.target.value })} aria-label={`${first.subject} time`} />
+                      <input className="input w-28 py-1" placeholder="Room" value={f.room} onChange={(e) => set({ room: e.target.value })} aria-label={`${first.subject} room`} />
+                      <button className="btn btn-sm" disabled={!f.date} onClick={() => save(key, items)}>
+                        Save
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
   );
 }
 

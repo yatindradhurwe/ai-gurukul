@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { withTenant } from "../../database/pool.js";
+import { withTenant, type Db } from "../../database/pool.js";
 import { asyncHandler, requireAuth, requireTenant } from "../../lib/http.js";
 import { round1, visibleClassesSql } from "./access.js";
 import { ATTENDED_SQL, COUNTED_SQL } from "./attendance.js";
@@ -7,6 +7,50 @@ import { INVOICE_COLUMNS, INVOICE_STATE } from "../school/fees.js";
 import { reviewableSql } from "../school/leave.js";
 
 export const dashboardRouter = Router();
+
+/**
+ * Promotion standing for students (a student's own dashboard, or a parent's
+ * children): current class, each year's result, open supplementary re-exams
+ * with their schedule, and final results declared but not yet decided.
+ */
+async function promotionStanding(db: Db, ids: string[]) {
+  const classes = (
+    await db.query(`SELECT e.student_id, c.name FROM class_enrollments e JOIN classes c ON c.id = e.class_id WHERE e.student_id = ANY($1::uuid[]) ORDER BY c.name`, [ids])
+  ).rows;
+  const years = (
+    await db.query(
+      `SELECT student_id, year_name, class_name, result, promoted_to_class_name, remarks, created_at FROM student_year_records
+        WHERE student_id = ANY($1::uuid[]) ORDER BY created_at DESC`,
+      [ids],
+    )
+  ).rows;
+  const supplementary = (
+    await db.query(
+      `SELECT x.student_id, x.subject, x.max_marks, x.pass_marks, x.original_marks, x.marks, x.status, x.exam_date, to_char(x.start_time, 'HH24:MI') AS start_time, x.room,
+              e.name AS exam, c.name AS class_name, t.name AS target_class
+         FROM supplementary_exams x JOIN exams e ON e.id = x.exam_id JOIN classes c ON c.id = x.class_id LEFT JOIN classes t ON t.id = x.target_class_id
+        WHERE x.student_id = ANY($1::uuid[]) AND NOT x.resolved ORDER BY x.exam_date NULLS LAST, x.start_time NULLS LAST, x.subject`,
+      [ids],
+    )
+  ).rows;
+  const awaiting = (
+    await db.query(
+      `SELECT DISTINCT ON (en.student_id) en.student_id, e.name AS exam
+         FROM class_enrollments en JOIN exam_papers p ON p.class_id = en.class_id JOIN exams e ON e.id = p.exam_id
+        WHERE en.student_id = ANY($1::uuid[]) AND e.is_final AND e.status = 'completed'
+          AND NOT EXISTS (SELECT 1 FROM student_year_records r WHERE r.student_id = en.student_id AND r.exam_id = e.id)
+          AND NOT EXISTS (SELECT 1 FROM supplementary_exams x WHERE x.student_id = en.student_id AND x.exam_id = e.id)
+        ORDER BY en.student_id, e.end_date DESC NULLS LAST`,
+      [ids],
+    )
+  ).rows;
+  return (id: string) => ({
+    classes: classes.filter((c) => c.student_id === id).map((c) => c.name),
+    promotions: years.filter((y) => y.student_id === id).map(({ student_id: _s, ...y }) => y),
+    supplementary: supplementary.filter((x) => x.student_id === id).map(({ student_id: _s, ...x }) => x),
+    awaitingPromotion: awaiting.find((a) => a.student_id === id)?.exam ?? null,
+  });
+}
 
 // Schools on the platform are in India; "today" follows IST.
 const TODAY = `(now() AT TIME ZONE 'Asia/Kolkata')::date`;
@@ -150,6 +194,7 @@ dashboardRouter.get(
           feesDuePaise: Number(fees.due),
           feesOverdue: fees.overdue,
           books,
+          standing: (await promotionStanding(db, [sid]))(sid),
         };
       }
 
@@ -166,46 +211,11 @@ dashboardRouter.get(
             WHERE l.parent_id = $1 AND l.consent_status = 'granted' ORDER BY u.name`,
           [userId],
         );
-        // Promotion standing: current class, year results, open supplementary re-exams,
-        // and final results declared but not yet decided.
-        const ids = kids.rows.map((k) => k.student_id);
-        const classes = (
-          await db.query(`SELECT e.student_id, c.name FROM class_enrollments e JOIN classes c ON c.id = e.class_id WHERE e.student_id = ANY($1::uuid[]) ORDER BY c.name`, [ids])
-        ).rows;
-        const years = (
-          await db.query(
-            `SELECT student_id, year_name, class_name, result, promoted_to_class_name, remarks, created_at FROM student_year_records
-              WHERE student_id = ANY($1::uuid[]) ORDER BY created_at DESC`,
-            [ids],
-          )
-        ).rows;
-        const supplementary = (
-          await db.query(
-            `SELECT x.student_id, x.subject, x.max_marks, x.pass_marks, x.original_marks, x.marks, x.status, x.exam_date, x.resolved,
-                    e.name AS exam, c.name AS class_name, t.name AS target_class
-               FROM supplementary_exams x JOIN exams e ON e.id = x.exam_id JOIN classes c ON c.id = x.class_id LEFT JOIN classes t ON t.id = x.target_class_id
-              WHERE x.student_id = ANY($1::uuid[]) AND NOT x.resolved ORDER BY x.exam_date NULLS LAST, x.subject`,
-            [ids],
-          )
-        ).rows;
-        const awaiting = (
-          await db.query(
-            `SELECT DISTINCT ON (en.student_id) en.student_id, e.name AS exam
-               FROM class_enrollments en JOIN exam_papers p ON p.class_id = en.class_id JOIN exams e ON e.id = p.exam_id
-              WHERE en.student_id = ANY($1::uuid[]) AND e.is_final AND e.status = 'completed'
-                AND NOT EXISTS (SELECT 1 FROM student_year_records r WHERE r.student_id = en.student_id AND r.exam_id = e.id)
-                AND NOT EXISTS (SELECT 1 FROM supplementary_exams x WHERE x.student_id = en.student_id AND x.exam_id = e.id)
-              ORDER BY en.student_id, e.end_date DESC NULLS LAST`,
-            [ids],
-          )
-        ).rows;
+        const standing = await promotionStanding(db, kids.rows.map((k) => k.student_id));
         out.children = kids.rows.map(({ attended, counted, ...k }) => ({
           ...k,
           attendanceRate: rate({ attended, counted }),
-          classes: classes.filter((c) => c.student_id === k.student_id).map((c) => c.name),
-          promotions: years.filter((y) => y.student_id === k.student_id).map(({ student_id: _s, ...y }) => y),
-          supplementary: supplementary.filter((x) => x.student_id === k.student_id).map(({ student_id: _s, ...x }) => x),
-          awaitingPromotion: awaiting.find((a) => a.student_id === k.student_id)?.exam ?? null,
+          ...standing(k.student_id),
         }));
       }
 

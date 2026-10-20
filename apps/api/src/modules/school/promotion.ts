@@ -4,6 +4,7 @@ import { audit, withSystem, withTenant, type Db } from "../../database/pool.js";
 import { badRequest, notFound } from "../../lib/errors.js";
 import { asyncHandler, parse, requireAuth, requireTenant } from "../../lib/http.js";
 import { requirePermission } from "../../middleware/authorization.js";
+import { publish } from "../../realtime/hub.js";
 import { round1 } from "../lms/access.js";
 import { ATTENDED_SQL, COUNTED_SQL } from "../lms/attendance.js";
 import { applyPromotion, gradeNumber } from "./directory.js";
@@ -245,6 +246,19 @@ async function resolveSupplementary(db: Db, tenantId: string, actorId: string, s
   return result;
 }
 
+/** Tell students and their parents that their promotion standing changed, so dashboards refresh. */
+async function notifyFamilies(db: Db, tenantId: string, studentIds: string[]) {
+  if (!studentIds.length) return;
+  const users = (
+    await db.query(
+      `SELECT user_id AS id FROM student_profiles WHERE id = ANY($1::uuid[])
+       UNION SELECT parent_id FROM parent_student_links WHERE student_id = ANY($1::uuid[]) AND consent_status = 'granted'`,
+      [studentIds],
+    )
+  ).rows.map((r) => r.id);
+  await publish(db, tenantId, users, { type: "notify", module: "promotion" });
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
@@ -340,6 +354,37 @@ promotionRouter.get(
   }),
 );
 
+/** Schedule re-exams ahead of time — usually one subject for every student who sits it. */
+promotionRouter.post(
+  "/supplementary/schedule",
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const { userId } = requireAuth(req);
+    const b = parse(
+      z.object({
+        ids: z.array(z.string().uuid()).min(1).max(1000),
+        examDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
+        startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM").nullish(),
+        room: z.string().trim().max(60).nullish(),
+      }),
+      req.body,
+    );
+    const updated = await withTenant(tenant.id, async (db) => {
+      const rows = (
+        await db.query(
+          `UPDATE supplementary_exams SET exam_date = $2, start_time = $3, room = $4, updated_at = now()
+            WHERE id = ANY($1::uuid[]) AND status = 'pending' AND NOT resolved RETURNING student_id`,
+          [b.ids, b.examDate, b.startTime ?? null, b.room || null],
+        )
+      ).rows;
+      await notifyFamilies(db, tenant.id, [...new Set(rows.map((r) => r.student_id as string))]);
+      await audit(db, { tenantId: tenant.id, actorId: userId, action: "supplementary.schedule", metadata: { count: rows.length, examDate: b.examDate } });
+      return rows.length;
+    });
+    res.json({ updated });
+  }),
+);
+
 /** Record a re-exam: marks (or absent). Once all of a student's re-exams are in, they are promoted or kept back. */
 promotionRouter.put(
   "/supplementary/:id",
@@ -356,6 +401,7 @@ promotionRouter.put(
       const status = b.absent ? "absent" : x.pass_marks == null || b.marks! >= Number(x.pass_marks) ? "passed" : "failed";
       await db.query(`UPDATE supplementary_exams SET marks = $2, status = $3, exam_date = COALESCE($4, exam_date), updated_at = now() WHERE id = $1`, [x.id, b.absent ? null : b.marks, status, b.examDate ?? null]);
       const result = await resolveSupplementary(db, tenant.id, userId, x.student_id, x.exam_id);
+      await notifyFamilies(db, tenant.id, [x.student_id]);
       return { status, result };
     });
     res.json(out);
