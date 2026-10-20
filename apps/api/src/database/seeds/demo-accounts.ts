@@ -42,6 +42,8 @@ const USERS: DemoUser[] = [
   { key: "staff", name: "Kavita Nair", email: `staff@${DOMAIN}`, role: "staff", label: "Staff / HR", what: "Staff / HR: people directory, invitations, organisation reports" },
   { key: "accountant", name: "Anil Mehta", email: `accountant@${DOMAIN}`, role: "accountant", label: "Accountant", what: "Accountant: fee structures, collections and receipts" },
   { key: "librarian", name: "Lata Joshi", email: `librarian@${DOMAIN}`, role: "librarian", label: "Librarian", what: "Librarian: catalogue, issue and return books, fines" },
+  { key: "transport", name: "Suresh Patil", email: `transport@${DOMAIN}`, role: "transport_manager", label: "Transport manager", what: "Transport: buses, routes, stops and riders" },
+  { key: "warden", name: "Geeta Rao", email: `warden@${DOMAIN}`, role: "warden", label: "Hostel warden", what: "Hostel: rooms, beds and residents" },
   { key: "student1", name: "Ravi Kumar", email: `student1@${DOMAIN}`, role: "student", label: "Student", what: "Student (enrolled in 8-A Science)" },
   { key: "student2", name: "Anya Singh", email: `student2@${DOMAIN}`, role: "student", label: "Student", what: "Student (enrolled in 8-A Science)" },
   { key: "parent", name: "Sunita Kumar", email: `parent@${DOMAIN}`, role: "parent", label: "Parent", what: "Parent of Ravi Kumar" },
@@ -234,6 +236,85 @@ async function seedCampusRecords(db: Db, c: { tenantId: string; classId: string;
   await db.query(`INSERT INTO library_loans (tenant_id, book_id, user_id, issued_at, due_date, issued_by) VALUES ($1,$2,$3, now() - interval '17 days', ${today} - 3, $4)`, [t, ids2[2], anya, ids.librarian]);
 }
 
+/** Two bus routes and two hostels, with both demo students placed. Added once. */
+async function seedTransportAndHostel(db: Db, c: { tenantId: string; ids: Record<string, string>; s1: string; s2: string }) {
+  const done = await db.query(`SELECT 1 FROM transport_routes WHERE tenant_id = $1 LIMIT 1`, [c.tenantId]);
+  if (done.rowCount) return;
+  const { tenantId: t, ids, s1, s2 } = c;
+
+  const bus = async (reg: string, label: string, capacity: number, driver: string, phone: string) =>
+    (
+      await db.query(
+        `INSERT INTO transport_vehicles (tenant_id, registration_no, label, capacity, driver_name, driver_phone, attendant_name, attendant_phone)
+         VALUES ($1,$2,$3,$4,$5,$6,'Lakshmi','9845012345') RETURNING id`,
+        [t, reg, label, capacity, driver, phone],
+      )
+    ).rows[0].id as string;
+  const v1 = await bus("KA05MN4821", "Bus 1", 40, "Ramesh Gowda", "9845098450");
+  const v2 = await bus("KA05MP1907", "Bus 2", 32, "Imran Khan", "9900199001");
+  const routes: [string, string, [string, string, string, string][]][] = [
+    ["Route 1 — Jayanagar", v1, [["Jayanagar 4th Block", "Near the shopping complex", "07:05", "15:45"], ["South End Circle", "Metro station gate", "07:15", "15:35"], ["Lalbagh West Gate", "", "07:25", "15:25"], ["School", "Main gate", "07:45", "15:05"]]],
+    ["Route 2 — Indiranagar", v2, [["Indiranagar 100 Feet Road", "Opposite the bank", "07:00", "15:50"], ["Domlur Flyover", "", "07:12", "15:38"], ["Richmond Circle", "Bus stop", "07:28", "15:22"], ["School", "Main gate", "07:45", "15:05"]]],
+  ];
+  const firstStop: string[] = [];
+  for (const [name, vehicle, stops] of routes) {
+    const r = (await db.query(`INSERT INTO transport_routes (tenant_id, name, vehicle_id) VALUES ($1,$2,$3) RETURNING id`, [t, name, vehicle])).rows[0].id;
+    for (let i = 0; i < stops.length; i++) {
+      const [stop, landmark, pickup, drop] = stops[i];
+      const id = (
+        await db.query(`INSERT INTO transport_stops (tenant_id, route_id, name, landmark, sequence, pickup_time, drop_time) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`, [
+          t,
+          r,
+          stop,
+          landmark || null,
+          i + 1,
+          pickup,
+          drop,
+        ])
+      ).rows[0].id;
+      if (i === 1) firstStop.push(`${r}:${id}`);
+    }
+  }
+  for (const [sid, slot] of [[s1, firstStop[0]], [s2, firstStop[1]]] as const) {
+    const [route, stop] = slot.split(":");
+    await db.query(`INSERT INTO transport_assignments (tenant_id, student_id, route_id, stop_id) VALUES ($1,$2,$3,$4)`, [t, sid, route, stop]);
+  }
+
+  const hostel = async (name: string, kind: string, phone: string) =>
+    (await db.query(`INSERT INTO hostels (tenant_id, name, kind, warden_id, phone, address) VALUES ($1,$2,$3,$4,$5,'Campus north block') RETURNING id`, [t, name, kind, ids.warden, phone])).rows[0]
+      .id as string;
+  const boys = await hostel("Ganga House", "boys", "080-41234567");
+  const girls = await hostel("Kaveri House", "girls", "080-41234568");
+  let ravisRoom = "";
+  for (const [h, prefix] of [[boys, "1"], [girls, "2"]] as const) {
+    for (let n = 1; n <= 4; n++) {
+      const room = (
+        await db.query(`INSERT INTO hostel_rooms (tenant_id, hostel_id, room_no, floor, capacity, room_type) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`, [
+          t,
+          h,
+          `${prefix}0${n}`,
+          1,
+          n === 4 ? 2 : 3,
+          n === 4 ? "ac" : "standard",
+        ])
+      ).rows[0].id;
+      if (h === boys && n === 1) ravisRoom = room;
+    }
+  }
+  await db.query(`INSERT INTO hostel_allocations (tenant_id, room_id, student_id, start_date, created_by) VALUES ($1,$2,$3,(now() AT TIME ZONE 'Asia/Kolkata')::date - 30,$4)`, [
+    t,
+    ravisRoom,
+    s1,
+    ids.warden,
+  ]);
+
+  // A few AI-teacher questions so the student starts with some XP and a streak.
+  const session = (await db.query(`INSERT INTO tutor_sessions (tenant_id, student_id) VALUES ($1,$2) RETURNING id`, [t, s1])).rows[0].id;
+  for (const [q, daysAgo] of [["Why do knives have sharp edges?", 2], ["What is atmospheric pressure?", 1], ["Why do camels have wide feet?", 0]] as const) {
+    await db.query(`INSERT INTO tutor_messages (tenant_id, session_id, role, content, created_at) VALUES ($1,$2,'student',$3, now() - make_interval(days => $4))`, [t, session, q, daysAgo]);
+  }
+}
+
 export async function setupDemo(opts: { reset?: boolean; password?: string; superadminPassword?: string } = {}) {
   await seed(() => {});
   const db = await pool.connect();
@@ -295,6 +376,7 @@ export async function setupDemo(opts: { reset?: boolean; password?: string; supe
     }
     await seedSchoolRecords(db, { tenantId: tenant.id, classId: cls.id, ids, s1, s2 });
     await seedCampusRecords(db, { tenantId: tenant.id, classId: cls.id, ids, s1, s2 });
+    await seedTransportAndHostel(db, { tenantId: tenant.id, ids, s1, s2 });
     await db.query("COMMIT");
   } catch (err) {
     await db.query("ROLLBACK");

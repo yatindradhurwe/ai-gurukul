@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Icon, type IconName } from "../components/icons";
 import { Avatar, Badge, Empty, ErrorNote, Progress, SectionCard, Spinner, StatCard, fmtDate, fmtDateTime, inr, pct100, toneForPercent } from "../components/ui";
+import { BadgeShelf, CelebrationToast, GoalsCard, Leaderboard, LevelCard, useCelebrations, type Engagement } from "../components/Rewards";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/useApi";
 
@@ -71,8 +72,11 @@ function WeekBars({ days }: { days: { date: string; rate: number | null }[] }) {
 }
 
 export function DashboardPage() {
-  const { user, can, tenant } = useAuth();
+  const { user, can, tenant, info } = useAuth();
   const dash = useApi<any>("/dashboard");
+  const isStudent = !!info?.studentProfileId;
+  const reward = useApi<Engagement>(isStudent ? "/engagement/me" : null);
+  const { news: toast, dismiss } = useCelebrations(reward.data);
   const news = useApi<any>("/announcements");
 
   if (dash.loading && !dash.data) return <Spinner />;
@@ -83,6 +87,8 @@ export function DashboardPage() {
   const children: any[] | undefined = d.children;
   const fees = d.fees;
   const library = d.library;
+  const transport = d.transport;
+  const hostel = d.hostel;
   const latest = (news.data?.announcements ?? []).slice(0, 4);
 
   const actions: { to: string; icon: IconName; label: string }[] = [];
@@ -99,7 +105,11 @@ export function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Hero */}
-      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand via-indigo-500 to-violet-500 p-6 text-white shadow-lift animate-fade-up md:p-8">
+      <section
+        className={`relative overflow-hidden rounded-[2rem] p-6 text-white shadow-lift animate-fade-up md:p-8 ${
+          isStudent ? "bg-gradient-to-br from-amber-400 via-orange-400 to-pink-500" : "bg-gradient-to-br from-brand via-indigo-500 to-violet-500"
+        }`}
+      >
         <div className="absolute -right-16 -top-16 h-56 w-56 rounded-full bg-white/10 blur-2xl" />
         <div className="absolute -bottom-20 right-24 h-48 w-48 rounded-full bg-amber-300/20 blur-2xl" />
         <div className="relative">
@@ -107,7 +117,9 @@ export function DashboardPage() {
           <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight md:text-4xl">
             {greeting()}, {user?.name.split(" ")[0]}
           </h1>
-          <p className="mt-1 text-white/85">{tenant ? `Welcome back to ${tenant.name}.` : "Welcome back."}</p>
+          <p className="mt-1 text-white/90">
+            {isStudent ? "Ready for today's learning adventure? Complete your quests to earn XP!" : tenant ? `Welcome back to ${tenant.name}.` : "Welcome back."}
+          </p>
           {actions.length > 0 && (
             <div className="mt-5 flex flex-wrap gap-2">
               {actions.slice(0, 4).map((a) => (
@@ -132,6 +144,35 @@ export function DashboardPage() {
             <WeekBars days={org.attendanceWeek} />
           </SectionCard>
         </>
+      )}
+
+      {isStudent && reward.data && (
+        <>
+          <LevelCard e={reward.data} />
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="space-y-6 lg:col-span-2">
+              <BadgeShelf e={reward.data} limit={6} />
+            </div>
+            <div className="space-y-6">
+              <GoalsCard e={reward.data} />
+            </div>
+          </div>
+        </>
+      )}
+
+      {(transport || hostel) && (
+        <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+          {transport && (
+            <>
+              <StatCard label="Students on transport" value={transport.riders} icon="bus" tone="amber" hint={`${transport.routes} routes · ${transport.vehicles} buses`} />
+            </>
+          )}
+          {hostel && (
+            <>
+              <StatCard label="Hostel beds used" value={`${hostel.occupied}/${hostel.beds}`} icon="home" tone="green" hint={`${hostel.beds - hostel.occupied} free in ${hostel.hostels} hostel(s)`} />
+            </>
+          )}
+        </div>
       )}
 
       {(fees || library) && (
@@ -214,8 +255,18 @@ export function DashboardPage() {
             </SectionCard>
           )}
 
-          {student && (student.feesDuePaise > 0 || student.books.overdue > 0) && (
+          {student && (student.feesDuePaise > 0 || student.books.overdue > 0 || student.bus || student.room) && (
             <div className="flex flex-wrap gap-3">
+              {student.bus && (
+                <Link to="/transport" className="flex items-center gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200 transition hover:-translate-y-0.5">
+                  <Icon name="bus" size={16} /> {student.bus.route} · pickup {student.bus.pickup_time} at {student.bus.stop}
+                </Link>
+              )}
+              {student.room && (
+                <Link to="/hostel" className="flex items-center gap-2 rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 ring-1 ring-emerald-200 transition hover:-translate-y-0.5">
+                  <Icon name="home" size={16} /> {student.room.hostel} · Room {student.room.room_no}
+                </Link>
+              )}
               {student.feesDuePaise > 0 && (
                 <Link to="/fees" className="flex items-center gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
                   <Icon name="card" size={16} /> {inr(student.feesDuePaise)} fees due{student.feesOverdue ? ` · ${student.feesOverdue} overdue` : ""}
@@ -320,7 +371,7 @@ export function DashboardPage() {
             </SectionCard>
           )}
 
-          {!org && !teaching && !student && !children && !fees && !library && (
+          {!org && !teaching && !student && !children && !fees && !library && !transport && !hostel && (
             <Empty title="Welcome to AI Gurukul" icon="sparkles">
               Use the menu to explore courses and announcements.
             </Empty>
@@ -328,6 +379,8 @@ export function DashboardPage() {
         </div>
 
         <div className="space-y-6">
+          {isStudent && reward.data && <Leaderboard e={reward.data} />}
+
           {(teaching || student) && (
             <SectionCard title="Today's timetable" icon="clock" action={<Link to="/timetable" className="text-xs font-semibold text-brand">Week →</Link>}>
               <Schedule slots={teaching?.today ?? student?.today ?? []} empty="No periods scheduled today." />
@@ -360,6 +413,7 @@ export function DashboardPage() {
           </SectionCard>
         </div>
       </div>
+      <CelebrationToast message={toast} onClose={dismiss} />
     </div>
   );
 }

@@ -24,6 +24,8 @@ export const PERMISSIONS = [
   "fees.manage",
   "exams.manage",
   "library.manage",
+  "transport.manage",
+  "hostel.manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -33,7 +35,7 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   tenant_admin: [
     "members.manage", "curriculum.read", "content.manage", "assessments.manage",
     "planner.manage_students", "reports.class", "reports.tenant", "usage.read", "classes.manage",
-    "announcements.manage", "fees.manage", "exams.manage", "library.manage",
+    "announcements.manage", "fees.manage", "exams.manage", "library.manage", "transport.manage", "hostel.manage",
   ],
   teacher: [
     "curriculum.read", "content.manage", "assessments.manage", "assessments.review",
@@ -41,10 +43,13 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   ],
   // Staff / HR: people administration and organisation reports, but no access to
   // individual students' academic records, content or classes.
-  staff: ["curriculum.read", "members.manage", "reports.tenant", "usage.read", "announcements.manage", "fees.manage", "library.manage"],
+  staff: ["curriculum.read", "members.manage", "reports.tenant", "usage.read", "announcements.manage", "fees.manage", "library.manage", "transport.manage", "hostel.manage"],
   // Accountant: fee collection only. Librarian: the library only.
   accountant: ["curriculum.read", "fees.manage"],
   librarian: ["curriculum.read", "library.manage"],
+  // Transport manager: buses, routes and riders. Warden: hostel rooms and residents.
+  transport_manager: ["curriculum.read", "transport.manage"],
+  warden: ["curriculum.read", "hostel.manage"],
   content_reviewer: ["curriculum.read", "content.review"],
   parent: ["curriculum.read", "reports.children", "tenant.billing"],
   student: ["curriculum.read", "tutor.use", "assessments.take", "planner.self", "reports.self", "classes.attend"],
@@ -58,6 +63,8 @@ export const ROLE_NAMES: Record<string, string> = {
   content_reviewer: "Content reviewer",
   accountant: "Accountant",
   librarian: "Librarian",
+  transport_manager: "Transport manager",
+  warden: "Hostel warden",
   parent: "Parent / guardian",
   student: "Student",
 };

@@ -10,7 +10,7 @@ describe.skipIf(!dbAvailable)("demo accounts setup", () => {
 
   it("creates one working login per role, idempotently", async () => {
     const first = await setupDemo();
-    expect(first.map((r) => r.user.key)).toEqual(["superadmin", "principal", "admin", "teacher", "staff", "accountant", "librarian", "student1", "student2", "parent"]);
+    expect(first.map((r) => r.user.key)).toEqual(["superadmin", "principal", "admin", "teacher", "staff", "accountant", "librarian", "transport", "warden", "student1", "student2", "parent"]);
     expect(first.every((r) => r.password)).toBe(true);
 
     const login = async (email: string, password: string) => (await request(app).post("/api/v1/auth/login").send({ email, password }).expect(200)).body.accessToken as string;
@@ -34,7 +34,7 @@ describe.skipIf(!dbAvailable)("demo accounts setup", () => {
 
     // School admin and staff/HR manage people; HR cannot open a student's academic records.
     const members = await request(app).get("/api/v1/tenants/current/members").set(await as("staff")).expect(200);
-    expect(members.body.members).toHaveLength(10);
+    expect(members.body.members).toHaveLength(12);
     const roles = Object.fromEntries(members.body.members.map((m: any) => [m.email, m.roles]));
     expect(roles[byKey.staff.user.email]).toEqual(["staff"]);
     expect(roles[byKey.admin.user.email]).toEqual(["tenant_admin"]);
@@ -49,6 +49,13 @@ describe.skipIf(!dbAvailable)("demo accounts setup", () => {
     await request(app).get("/api/v1/fees/summary").set(await as("librarian")).expect(403);
     expect((await request(app).get("/api/v1/library/loans?state=overdue").set(await as("librarian")).expect(200)).body.loans).toHaveLength(1);
     expect((await request(app).get("/api/v1/exams").set(await as("student1")).expect(200)).body.exams[0]).toMatchObject({ name: "Half-yearly examination", papers: 3 });
+
+    // Transport, hostel and rewards: the student rides a bus, lives in a room and has XP.
+    expect((await request(app).get("/api/v1/transport/my").set(await as("student1")).expect(200)).body.route.name).toBe("Route 1 — Jayanagar");
+    expect((await request(app).get("/api/v1/hostels/my").set(await as("student1")).expect(200)).body.room.room_no).toBe("101");
+    expect((await request(app).get("/api/v1/hostels").set(await as("warden")).expect(200)).body.hostels).toHaveLength(2);
+    expect((await request(app).get("/api/v1/transport/routes").set(await as("transport")).expect(200)).body.summary.riders).toBe(2);
+    expect((await request(app).get("/api/v1/engagement/me").set(await as("student1")).expect(200)).body.xp).toBeGreaterThan(0);
 
     // Re-running keeps passwords unless asked to reset, and does not duplicate data.
     const second = await setupDemo();

@@ -4,7 +4,6 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { NoAccess, Spinner } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
-import { applyTheme } from "./lib/theme";
 import { AnnouncementsPage } from "./pages/AnnouncementsPage";
 import { AssignmentDetailPage, AssignmentsPage } from "./pages/AssignmentsPage";
 import { AttendancePage } from "./pages/AttendancePage";
@@ -17,7 +16,10 @@ import { ContentPage } from "./pages/ContentPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ExamDetailPage, ExamsPage } from "./pages/ExamsPage";
 import { FeesPage, ReceiptPage } from "./pages/FeesPage";
+import { HostelPage } from "./pages/HostelPage";
 import { LibraryPage } from "./pages/LibraryPage";
+import { RewardsPage } from "./pages/RewardsPage";
+import { TransportPage } from "./pages/TransportPage";
 import { GradebookPage } from "./pages/GradebookPage";
 import { JoinPage } from "./pages/JoinPage";
 import { LearnPage } from "./pages/LearnPage";
@@ -33,8 +35,6 @@ import { StudentHome } from "./pages/StudentHome";
 import { TimetablePage } from "./pages/TimetablePage";
 import { TutorPage } from "./pages/TutorPage";
 import "./index.css";
-
-applyTheme();
 
 /** Render the page only when the caller's role has one of the permissions; the API enforces the same rule. */
 function Guard({ any, what, children }: { any: string[]; what: string; children: ReactNode }) {
@@ -74,6 +74,9 @@ function App() {
         <Route path="fees" element={<Guard any={FEES} what="fees"><FeesPage /></Guard>} />
         <Route path="fees/receipts/:id" element={<Guard any={FEES} what="this receipt"><ReceiptPage /></Guard>} />
         <Route path="library" element={<LibraryPage />} />
+        <Route path="transport" element={<Guard any={["transport.manage", "classes.attend", "reports.children"]} what="transport"><TransportPage /></Guard>} />
+        <Route path="hostel" element={<Guard any={["hostel.manage", "classes.attend", "reports.children"]} what="the hostel"><HostelPage /></Guard>} />
+        <Route path="rewards" element={<Guard any={["classes.attend", "reports.children"]} what="rewards"><RewardsPage /></Guard>} />
         <Route path="plan" element={<Guard any={["planner.self"]} what="the study plan"><PlanPage /></Guard>} />
         <Route path="results" element={<Guard any={["reports.self"]} what="results"><ResultsPage /></Guard>} />
         <Route path="results/quiz/:id" element={<Guard any={["assessments.take"]} what="this quiz"><QuizPage /></Guard>} />

@@ -105,7 +105,7 @@ tenantsRouter.get(
 
 const inviteSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
-  role: z.enum(["tenant_admin", "teacher", "staff", "accountant", "librarian", "content_reviewer", "parent", "student"]),
+  role: z.enum(["tenant_admin", "teacher", "staff", "accountant", "librarian", "transport_manager", "warden", "content_reviewer", "parent", "student"]),
 });
 
 tenantsRouter.post(

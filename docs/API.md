@@ -216,6 +216,30 @@ Amounts are sent in rupees and returned in paise (`*_paise`). Fee staff are owne
 | POST | `/library/loans/:id/renew`, `/library/loans/:id/fine-paid` | library.manage | |
 | GET | `/library/my?studentId` | member / parent | Own loans, or a child's |
 
+## Transport, hostels and rewards
+
+Transport is managed by owners, admins, staff/HR and transport managers (`transport.manage`); hostels by owners, admins, staff/HR and wardens (`hostel.manage`).
+
+| Method | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET / POST / PATCH | `/transport/vehicles[/:id]` | transport.manage | `{registrationNo, label, capacity, driverName, driverPhone, attendantName?, attendantPhone?, status}` |
+| GET / POST / PATCH / DELETE | `/transport/routes[/:id]` | transport.manage | Routes with vehicle, riders and ordered stops; a route with riders can't be deleted |
+| POST | `/transport/routes/:id/stops` | transport.manage | `{name, landmark?, pickupTime, dropTime, sequence?}`; inserting mid-route shifts later stops |
+| DELETE | `/transport/stops/:id` | transport.manage | Refused while students board there |
+| GET | `/transport/riders?routeId` | transport.manage | Every student with their route and stop |
+| PUT / DELETE | `/transport/riders/:studentId` | transport.manage | `{stopId, direction: both\|pickup\|drop}`; refused when the bus is full |
+| GET | `/transport/my?studentId` | self / parent / staff | Route, vehicle, driver contacts, all stops and the student's stop |
+| GET / POST / PATCH / DELETE | `/hostels[/:id]` | hostel.manage | Hostels with occupancy and rooms with residents |
+| POST | `/hostels/:id/rooms` | hostel.manage | `{roomNo, floor, capacity, roomType}` |
+| PATCH / DELETE | `/hostels/rooms/:roomId` | hostel.manage | Capacity can't drop below current residents |
+| GET | `/hostels/students`, `/hostels/wardens` | hostel.manage | Pickers |
+| POST | `/hostels/rooms/:roomId/allocations` | hostel.manage | `{studentId, startDate?}`; moving closes the old allocation; refused when the room is full |
+| POST | `/hostels/allocations/:id/vacate` | hostel.manage | Keeps the history |
+| GET | `/hostels/my?studentId` | self / parent / staff | Room, roommates and warden |
+| GET | `/engagement/me?studentId` | self / parent / staff | XP, level, streak, daily goals, badges, weekly XP, recent activity and the class leaderboard (first names only) |
+
+XP comes from what students already do: lesson 20, quiz 15 + up to 15 for the score, assignment 25, study task 10, attendance 10, live class 15, library return 15, AI-teacher question or class doubt 5 (at most 10 a day). Level *n* needs 50·(n−1)² XP.
+
 ## Parents
 
 | Method | Path | Permission | Notes |

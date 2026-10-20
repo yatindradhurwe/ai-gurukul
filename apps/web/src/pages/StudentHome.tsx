@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { celebrate } from "../lib/celebrate";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/useApi";
 import { ErrorNote, Progress, Spinner, TaskChip } from "../components/ui";
@@ -10,7 +11,9 @@ export function StudentHome() {
   const cont = useApi("/courses/continue");
 
   async function toggle(task: any) {
-    await api(`/academic/tasks/${task.id}`, { method: "PATCH", body: { status: task.status === "completed" ? "pending" : "completed" } });
+    const finishing = task.status !== "completed";
+    await api(`/academic/tasks/${task.id}`, { method: "PATCH", body: { status: finishing ? "completed" : "pending" } });
+    if (finishing) celebrate(40);
     dash.reload();
   }
 

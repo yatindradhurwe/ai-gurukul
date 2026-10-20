@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/icons";
 import { Avatar, Badge, Empty, ErrorNote, Field, Modal, PageTitle, Progress, SectionCard, Spinner, SuccessNote, fmtDateTime, type Tone } from "../components/ui";
 import { api } from "../lib/api";
+import { celebrate } from "../lib/celebrate";
 import { useAuth } from "../lib/auth";
 import { ClassPicker, StudentPicker, useClasses, useStudentOptions } from "../lib/lms";
 import { useApi } from "../lib/useApi";
@@ -254,7 +255,8 @@ function MySubmission({ assignment, submission, canSubmit, onSubmitted }: { assi
     setError(null);
     try {
       await api(`/assignments/${assignment.id}/submit`, { body: { content, linkUrl: linkUrl || null } });
-      setOk(submission ? "Submission updated." : "Submitted! Your teacher will grade it.");
+      setOk(submission ? "Submission updated." : "Submitted! +25 XP — your teacher will grade it.");
+      if (!submission) celebrate();
       onSubmitted();
     } catch (err) {
       setError((err as Error).message);

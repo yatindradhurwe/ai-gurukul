@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import { useTheme, type Theme } from "../lib/theme";
 import { useApi } from "../lib/useApi";
 import { Icon, type IconName } from "./icons";
 import { Avatar } from "./ui";
@@ -12,11 +11,13 @@ interface NavItem {
   to: string;
   label: string;
   icon: IconName;
+  hint: string;
   show: (can: Can, platformAdmin: boolean) => boolean;
 }
 
 interface NavGroup {
   label: string;
+  icon: IconName;
   items: NavItem[];
 }
 
@@ -26,57 +27,55 @@ const parent = (can: Can) => can("reports.children");
 
 export const NAV: NavGroup[] = [
   {
-    label: "Overview",
-    items: [
-      { to: "/", label: "Dashboard", icon: "dashboard", show: () => true },
-      { to: "/today", label: "My day", icon: "target", show: (can) => can("planner.self") },
-    ],
-  },
-  {
     label: "Learning",
+    icon: "book",
     items: [
-      { to: "/learn", label: "Courses", icon: "book", show: (can) => can("curriculum.read") },
-      { to: "/tutor", label: "AI Teacher", icon: "sparkles", show: (can) => can("tutor.use") },
-      { to: "/plan", label: "Study plan", icon: "calendar", show: (can) => can("planner.self") },
-      { to: "/results", label: "Results", icon: "trending", show: (can) => can("reports.self") },
+      { to: "/today", label: "My day", icon: "target", hint: "Today's study plan", show: (can) => can("planner.self") },
+      { to: "/rewards", label: "Rewards", icon: "award", hint: "XP, streaks and badges", show: (can) => learner(can) || parent(can) },
+      { to: "/learn", label: "Courses", icon: "book", hint: "Chapters and lessons", show: (can) => can("curriculum.read") },
+      { to: "/tutor", label: "AI Teacher", icon: "sparkles", hint: "Ask any doubt", show: (can) => can("tutor.use") },
+      { to: "/plan", label: "Study plan", icon: "calendar", hint: "Your exam plan", show: (can) => can("planner.self") },
+      { to: "/results", label: "Results", icon: "trending", hint: "Mastery and quizzes", show: (can) => can("reports.self") },
     ],
   },
   {
     label: "Classroom",
+    icon: "video",
     items: [
-      { to: "/classes", label: "Live classes", icon: "video", show: (can) => staff(can) || learner(can) },
-      { to: "/timetable", label: "Timetable", icon: "clock", show: (can) => staff(can) || learner(can) },
-      { to: "/assignments", label: "Assignments", icon: "clipboard", show: (can) => staff(can) || learner(can) || parent(can) },
-      { to: "/attendance", label: "Attendance", icon: "checkSquare", show: (can) => staff(can) || learner(can) || parent(can) },
+      { to: "/classes", label: "Live classes", icon: "video", hint: "AI avatar lessons", show: (can) => staff(can) || learner(can) },
+      { to: "/timetable", label: "Timetable", icon: "clock", hint: "The weekly schedule", show: (can) => staff(can) || learner(can) },
+      { to: "/assignments", label: "Assignments", icon: "clipboard", hint: "Homework and projects", show: (can) => staff(can) || learner(can) || parent(can) },
+      { to: "/attendance", label: "Attendance", icon: "checkSquare", hint: "Daily register", show: (can) => staff(can) || learner(can) || parent(can) },
     ],
   },
   {
     label: "Academics",
+    icon: "graduation",
     items: [
-      { to: "/exams", label: "Exams", icon: "file", show: (can) => can("exams.manage") || staff(can) || learner(can) || parent(can) },
-      { to: "/gradebook", label: "Gradebook", icon: "award", show: staff },
-      { to: "/report-card", label: "Report card", icon: "chart", show: (can) => learner(can) || parent(can) || staff(can) },
-      { to: "/children", label: "My children", icon: "heart", show: parent },
+      { to: "/exams", label: "Exams", icon: "file", hint: "Date sheets and results", show: (can) => can("exams.manage") || staff(can) || learner(can) || parent(can) },
+      { to: "/gradebook", label: "Gradebook", icon: "award", hint: "Enter marks", show: staff },
+      { to: "/report-card", label: "Report card", icon: "chart", hint: "Grades and progress", show: (can) => learner(can) || parent(can) || staff(can) },
+      { to: "/children", label: "My children", icon: "heart", hint: "Weekly reports", show: parent },
     ],
   },
   {
     label: "Campus",
+    icon: "layers",
     items: [
-      { to: "/fees", label: "Fees", icon: "card", show: (can) => can("fees.manage") || learner(can) || parent(can) },
-      { to: "/library", label: "Library", icon: "book", show: () => true },
+      { to: "/fees", label: "Fees", icon: "card", hint: "Dues and receipts", show: (can) => can("fees.manage") || learner(can) || parent(can) },
+      { to: "/library", label: "Library", icon: "book", hint: "Find and borrow books", show: () => true },
+      { to: "/transport", label: "Transport", icon: "bus", hint: "Buses, routes and stops", show: (can) => can("transport.manage") || learner(can) || parent(can) },
+      { to: "/hostel", label: "Hostel", icon: "home", hint: "Rooms and residents", show: (can) => can("hostel.manage") || learner(can) || parent(can) },
     ],
   },
   {
-    label: "Community",
-    items: [{ to: "/announcements", label: "Announcements", icon: "megaphone", show: () => true }],
-  },
-  {
-    label: "Administration",
+    label: "Admin",
+    icon: "shield",
     items: [
-      { to: "/content", label: "Content", icon: "folder", show: (can) => can("content.manage") || can("content.review") },
-      { to: "/people", label: "People", icon: "users", show: (can) => can("members.manage") },
-      { to: "/billing", label: "Subscription", icon: "sliders", show: (can) => can("tenant.billing") },
-      { to: "/platform", label: "Platform admin", icon: "shield", show: (_can, platformAdmin) => platformAdmin },
+      { to: "/content", label: "Content", icon: "folder", hint: "Course material", show: (can) => can("content.manage") || can("content.review") },
+      { to: "/people", label: "People", icon: "users", hint: "Members and invitations", show: (can) => can("members.manage") },
+      { to: "/billing", label: "Subscription", icon: "sliders", hint: "Plan and billing", show: (can) => can("tenant.billing") },
+      { to: "/platform", label: "Platform admin", icon: "shield", hint: "All organisations", show: (_can, platformAdmin) => platformAdmin },
     ],
   },
 ];
@@ -88,6 +87,8 @@ const ROLE_LABELS: Record<string, string> = {
   staff: "Staff / HR",
   accountant: "Accountant",
   librarian: "Librarian",
+  transport_manager: "Transport",
+  warden: "Warden",
   content_reviewer: "Reviewer",
   parent: "Parent",
   student: "Student",
@@ -98,69 +99,136 @@ function useNav() {
   return NAV.map((g) => ({ ...g, items: g.items.filter((n) => n.show(can, !!user?.is_platform_admin)) })).filter((g) => g.items.length);
 }
 
+const isActive = (pathname: string, to: string) => (to === "/" ? pathname === "/" : pathname === to || pathname.startsWith(`${to}/`));
+
 function Brand() {
   const { tenant } = useAuth();
   return (
-    <Link to="/" className="flex items-center gap-2.5 px-2">
+    <Link to="/" className="flex shrink-0 items-center gap-2.5">
       {tenant?.settings?.logoUrl ? (
         <img src={tenant.settings.logoUrl} alt="" className="h-9 w-9 rounded-xl" />
       ) : (
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-violet-500 text-white shadow-md shadow-brand/30">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand via-violet-500 to-fuchsia-500 text-white shadow-md shadow-brand/30">
           <Icon name="graduation" size={20} />
         </div>
       )}
-      <div className="leading-tight">
+      <div className="hidden leading-tight sm:block">
         <p className="font-display text-[1.05rem] font-semibold text-slate-900">AI Gurukul</p>
-        <p className="max-w-[9.5rem] truncate text-[11px] text-slate-500">{tenant?.name ?? "Learning platform"}</p>
+        <p className="max-w-[9rem] truncate text-[11px] text-slate-500">{tenant?.name ?? "Learning platform"}</p>
       </div>
     </Link>
   );
 }
 
-function SideNav({ onNavigate }: { onNavigate?: () => void }) {
-  const groups = useNav();
+const pill = (active: boolean) =>
+  `inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-sm font-semibold transition ${
+    active ? "bg-brand text-white shadow-md shadow-brand/30" : "text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm"
+  }`;
+
+function GroupMenu({ group, open, onOpen, onClose }: { group: NavGroup; open: boolean; onOpen: () => void; onClose: () => void }) {
+  const { pathname } = useLocation();
+  const active = group.items.some((i) => isActive(pathname, i.to));
+  if (group.items.length === 1) {
+    const only = group.items[0];
+    return (
+      <NavLink to={only.to} className={pill(active)}>
+        <Icon name={only.icon} size={16} /> {only.label}
+      </NavLink>
+    );
+  }
   return (
-    <nav className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 pb-4">
-      {groups.map((g) => (
-        <div key={g.label}>
-          <p className="mb-1.5 px-3 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">{g.label}</p>
-          <div className="flex flex-col gap-0.5">
-            {g.items.map((n) => (
-              <NavLink
-                key={n.to}
-                to={n.to}
-                end={n.to === "/"}
-                onClick={onNavigate}
-                className={({ isActive }) =>
-                  `group relative flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
-                    isActive ? "bg-brand-soft font-semibold text-brand" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                  }`
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    {isActive && <span className="absolute inset-y-1.5 left-0 w-1 rounded-r-full bg-brand" />}
-                    <Icon name={n.icon} size={18} className={isActive ? "text-brand" : "text-slate-400 group-hover:text-slate-600"} />
-                    {n.label}
-                  </>
-                )}
-              </NavLink>
-            ))}
-          </div>
+    <div className="relative">
+      <button className={pill(active || open)} onClick={() => (open ? onClose() : onOpen())} aria-expanded={open} aria-haspopup="menu">
+        <Icon name={group.icon} size={16} /> {group.label}
+        <Icon name="chevronDown" size={14} className={`transition ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div role="menu" className="absolute left-0 z-40 mt-2 w-72 rounded-3xl bg-white p-2 shadow-lift ring-1 ring-slate-200 animate-pop">
+          {group.items.map((n) => {
+            const on = isActive(pathname, n.to);
+            return (
+              <Link key={n.to} to={n.to} role="menuitem" onClick={onClose} className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 transition ${on ? "bg-brand-soft" : "hover:bg-slate-50"}`}>
+                <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${on ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>
+                  <Icon name={n.icon} size={17} />
+                </span>
+                <span>
+                  <span className={`block text-sm font-semibold ${on ? "text-brand" : "text-slate-900"}`}>{n.label}</span>
+                  <span className="block text-xs text-slate-500">{n.hint}</span>
+                </span>
+              </Link>
+            );
+          })}
         </div>
+      )}
+    </div>
+  );
+}
+
+function DesktopNav() {
+  const groups = useNav();
+  const { pathname } = useLocation();
+  const [open, setOpen] = useState<string | null>(null);
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => setOpen(null), [pathname]);
+  useEffect(() => {
+    const close = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(null);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(null);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", esc);
+    };
+  }, []);
+  return (
+    <nav ref={ref} className="hidden items-center gap-1 rounded-full bg-slate-100/80 p-1 xl:flex" aria-label="Main">
+      <NavLink to="/" end className={({ isActive: a }) => pill(a)}>
+        <Icon name="dashboard" size={16} /> Dashboard
+      </NavLink>
+      {groups.map((g) => (
+        <GroupMenu key={g.label} group={g} open={open === g.label} onOpen={() => setOpen(g.label)} onClose={() => setOpen(null)} />
       ))}
+      <NavLink to="/announcements" className={({ isActive: a }) => pill(a)}>
+        <Icon name="megaphone" size={16} /> Notices
+      </NavLink>
     </nav>
   );
 }
 
-function ThemeSwitch() {
-  const { theme, setTheme, isDark } = useTheme();
-  const next: Record<Theme, Theme> = { light: "dark", dark: "system", system: "light" };
-  const label = theme === "system" ? "Theme: follows device" : `Theme: ${theme}`;
+function MobileMenu({ onClose }: { onClose: () => void }) {
+  const groups = useNav();
+  const { pathname } = useLocation();
+  const item = (n: { to: string; label: string; icon: IconName }) => {
+    const on = isActive(pathname, n.to);
+    return (
+      <Link key={n.to} to={n.to} onClick={onClose} className={`flex flex-col items-center gap-1.5 rounded-2xl p-3 text-center text-xs font-semibold transition ${on ? "bg-brand text-white" : "bg-slate-50 text-slate-700 hover:bg-slate-100"}`}>
+        <Icon name={n.icon} size={20} />
+        {n.label}
+      </Link>
+    );
+  };
   return (
-    <button className="relative rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800" onClick={() => setTheme(next[theme])} title={label} aria-label={label}>
-      <Icon name={theme === "system" ? "monitor" : isDark ? "moon" : "sun"} />
-    </button>
+    <div className="fixed inset-0 z-50 xl:hidden">
+      <div className="absolute inset-0 bg-slate-950/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-x-0 top-0 max-h-[90vh] overflow-y-auto rounded-b-[2rem] bg-white p-5 shadow-lift animate-fade-up">
+        <div className="mb-4 flex items-center justify-between">
+          <Brand />
+          <button className="rounded-xl p-2 text-slate-500 hover:bg-slate-100" onClick={onClose} aria-label="Close menu">
+            <Icon name="x" />
+          </button>
+        </div>
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+          {item({ to: "/", label: "Dashboard", icon: "dashboard" })}
+          {item({ to: "/announcements", label: "Notices", icon: "megaphone" })}
+        </div>
+        {groups.map((g) => (
+          <div key={g.label} className="mt-5">
+            <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">{g.label}</p>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">{g.items.map(item)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -177,16 +245,16 @@ function UserMenu() {
   const role = tenant?.roles?.map((r) => ROLE_LABELS[r] ?? r).join(", ") ?? (user.is_platform_admin ? "Platform admin" : "");
   return (
     <div className="relative" ref={ref}>
-      <button className="flex items-center gap-2 rounded-xl py-1 pl-1 pr-2 transition hover:bg-slate-100" onClick={() => setOpen(!open)} aria-expanded={open}>
+      <button className="flex items-center gap-2 rounded-full bg-white py-1 pl-1 pr-2 shadow-sm ring-1 ring-slate-200 transition hover:shadow-md" onClick={() => setOpen(!open)} aria-expanded={open}>
         <Avatar name={user.name} size={32} />
-        <span className="hidden text-left leading-tight sm:block">
-          <span className="block max-w-[10rem] truncate text-sm font-semibold text-slate-900">{user.name}</span>
+        <span className="hidden text-left leading-tight md:block">
+          <span className="block max-w-[9rem] truncate text-sm font-semibold text-slate-900">{user.name.split(" ")[0]}</span>
           <span className="block text-[11px] text-slate-500">{role}</span>
         </span>
-        <Icon name="chevronDown" size={16} className="hidden text-slate-400 sm:block" />
+        <Icon name="chevronDown" size={16} className="hidden text-slate-400 md:block" />
       </button>
       {open && (
-        <div className="absolute right-0 z-40 mt-2 w-64 rounded-2xl bg-surface p-2 shadow-lift ring-1 ring-slate-200 animate-fade-up">
+        <div className="absolute right-0 z-40 mt-2 w-64 rounded-3xl bg-white p-2 shadow-lift ring-1 ring-slate-200 animate-pop">
           <div className="border-b border-slate-100 px-3 pb-3 pt-2">
             <p className="truncate text-sm font-semibold text-slate-900">{user.name}</p>
             <p className="truncate text-xs text-slate-500">{user.email}</p>
@@ -204,7 +272,7 @@ function UserMenu() {
               </select>
             </div>
           )}
-          <button className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-600 hover:bg-slate-100 hover:text-red-600" onClick={logout}>
+          <button className="mt-1 flex w-full items-center gap-2 rounded-2xl px-3 py-2 text-sm text-slate-600 hover:bg-slate-100 hover:text-red-600" onClick={logout}>
             <Icon name="logout" size={16} /> Sign out
           </button>
         </div>
@@ -223,11 +291,35 @@ function Bell() {
   }, [pathname, reload]);
   const unread = feed.data?.unread ?? 0;
   return (
-    <Link to="/announcements" className="relative rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800" aria-label={`Announcements${unread ? `, ${unread} unread` : ""}`}>
-      <Icon name="bell" />
+    <Link to="/announcements" className="relative rounded-full bg-white p-2.5 text-slate-600 shadow-sm ring-1 ring-slate-200 transition hover:text-slate-900 hover:shadow-md" aria-label={`Announcements${unread ? `, ${unread} unread` : ""}`}>
+      <Icon name="bell" size={18} className={unread ? "animate-wiggle" : ""} />
       {unread > 0 && (
-        <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white ring-2 ring-surface">
+        <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white ring-2 ring-white">
           {unread > 9 ? "9+" : unread}
+        </span>
+      )}
+    </Link>
+  );
+}
+
+/** Students see their level and XP in the header — a constant nudge to keep learning. */
+function XpChip() {
+  const { info } = useAuth();
+  const { pathname } = useLocation();
+  const me = useApi<any>(info?.studentProfileId ? "/engagement/me" : null);
+  const { reload } = me;
+  useEffect(() => {
+    reload();
+  }, [pathname, reload]);
+  if (!me.data) return null;
+  return (
+    <Link to="/rewards" title={`Level ${me.data.level.number} · ${me.data.level.name}`} className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-gradient-to-r from-amber-300 to-orange-400 py-1.5 pl-1.5 pr-3 text-sm font-bold text-amber-950 shadow-md shadow-amber-500/30 transition hover:scale-[1.03] sm:flex">
+      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/70 text-xs">{me.data.level.number}</span>
+      {me.data.xp} XP
+      {me.data.streak.current > 0 && (
+        <span className="ml-0.5 inline-flex items-center gap-0.5 rounded-full bg-white/60 px-1.5 text-xs">
+          <Icon name="flame" size={12} className="fill-orange-500 text-orange-600" />
+          {me.data.streak.current}
         </span>
       )}
     </Link>
@@ -236,76 +328,47 @@ function Bell() {
 
 function usePageTitle() {
   const { pathname } = useLocation();
-  const all = NAV.flatMap((g) => g.items);
-  const match = all.filter((n) => (n.to === "/" ? pathname === "/" : pathname.startsWith(n.to))).sort((a, b) => b.to.length - a.to.length)[0];
+  if (pathname === "/") return "Dashboard";
   if (pathname.startsWith("/live/")) return "Live classroom";
   if (pathname.startsWith("/fees/receipts/")) return "Fee receipt";
-  return match?.label ?? "AI Gurukul";
+  if (pathname.startsWith("/announcements")) return "Announcements";
+  const all = NAV.flatMap((g) => g.items);
+  return all.filter((n) => isActive(pathname, n.to)).sort((a, b) => b.to.length - a.to.length)[0]?.label ?? "AI Gurukul";
 }
 
 export function Layout() {
-  const { can } = useAuth();
-  const [drawer, setDrawer] = useState(false);
+  const [menu, setMenu] = useState(false);
   const { pathname } = useLocation();
   const title = usePageTitle();
-  useEffect(() => setDrawer(false), [pathname]);
+  useEffect(() => setMenu(false), [pathname]);
   useEffect(() => {
     document.title = `${title} · AI Gurukul`;
   }, [title]);
 
   return (
-    <div className="min-h-screen lg:flex">
-      {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-slate-200/80 bg-surface lg:flex">
-        <div className="py-5">
+    <div className="min-h-screen">
+      <header className="sticky top-0 z-30 border-b border-white/60 bg-white/70 backdrop-blur-xl">
+        <div className="mx-auto flex h-[4.25rem] max-w-7xl items-center gap-3 px-4 md:px-6">
           <Brand />
-        </div>
-        <SideNav />
-        {can("tutor.use") && (
-          <Link to="/tutor" className="m-3 block rounded-2xl bg-gradient-to-br from-brand to-violet-500 p-4 text-white transition hover:shadow-lift">
-            <p className="flex items-center gap-2 text-sm font-semibold">
-              <Icon name="sparkles" size={16} /> Ask your AI teacher
-            </p>
-            <p className="mt-0.5 text-xs text-white/80">Doubts answered from your own course material.</p>
-          </Link>
-        )}
-      </aside>
-
-      {/* Mobile drawer */}
-      {drawer && (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={() => setDrawer(false)} />
-          <aside className="absolute inset-y-0 left-0 flex w-72 flex-col bg-surface shadow-lift animate-fade-up">
-            <div className="flex items-center justify-between py-5 pr-3">
-              <Brand />
-              <button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" onClick={() => setDrawer(false)} aria-label="Close menu">
-                <Icon name="x" />
-              </button>
-            </div>
-            <SideNav onNavigate={() => setDrawer(false)} />
-          </aside>
-        </div>
-      )}
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-slate-200/80 bg-surface/80 px-4 backdrop-blur-md md:px-8">
-          <button className="rounded-xl p-2 text-slate-600 hover:bg-slate-100 lg:hidden" onClick={() => setDrawer(true)} aria-label="Open menu">
-            <Icon name="menu" />
-          </button>
-          <p className="truncate text-sm font-semibold text-slate-900">{title}</p>
-          <div className="ml-auto flex items-center gap-1">
-            <ThemeSwitch />
+          <div className="flex flex-1 justify-center">
+            <DesktopNav />
+          </div>
+          <div className="flex items-center gap-2">
+            <XpChip />
             <Bell />
-            <div className="mx-1 h-6 w-px bg-slate-200" />
             <UserMenu />
+            <button className="rounded-full bg-white p-2.5 text-slate-700 shadow-sm ring-1 ring-slate-200 xl:hidden" onClick={() => setMenu(true)} aria-label="Open menu">
+              <Icon name="menu" size={18} />
+            </button>
           </div>
-        </header>
-        <main className="flex-1 px-4 pb-16 pt-6 md:px-8">
-          <div className="mx-auto max-w-6xl">
-            <Outlet />
-          </div>
-        </main>
-      </div>
+        </div>
+      </header>
+      {menu && <MobileMenu onClose={() => setMenu(false)} />}
+      <main className="px-4 pb-16 pt-6 md:px-6">
+        <div className="mx-auto max-w-7xl">
+          <Outlet />
+        </div>
+      </main>
     </div>
   );
 }

@@ -123,7 +123,24 @@ dashboardRouter.get(
         const books = (
           await db.query(`SELECT count(*)::int AS n, count(*) FILTER (WHERE due_date < ${TODAY})::int AS overdue FROM library_loans WHERE user_id = $1 AND returned_at IS NULL`, [userId])
         ).rows[0];
+        const bus = (
+          await db.query(
+            `SELECT r.name AS route, st.name AS stop, to_char(st.pickup_time,'HH24:MI') AS pickup_time, to_char(st.drop_time,'HH24:MI') AS drop_time, v.registration_no
+               FROM transport_assignments a JOIN transport_routes r ON r.id = a.route_id JOIN transport_stops st ON st.id = a.stop_id
+               LEFT JOIN transport_vehicles v ON v.id = r.vehicle_id WHERE a.student_id = $1`,
+            [sid],
+          )
+        ).rows[0];
+        const room = (
+          await db.query(
+            `SELECT h.name AS hostel, r.room_no FROM hostel_allocations a JOIN hostel_rooms r ON r.id = a.room_id JOIN hostels h ON h.id = r.hostel_id
+              WHERE a.student_id = $1 AND a.end_date IS NULL`,
+            [sid],
+          )
+        ).rows[0];
         out.student = {
+          bus: bus ?? null,
+          room: room ?? null,
           today: today.rows,
           due: due.rows,
           attendanceRate: rate(att),
@@ -169,6 +186,25 @@ dashboardRouter.get(
                     count(*) FILTER (WHERE returned_at IS NULL)::int AS on_loan,
                     count(*) FILTER (WHERE returned_at IS NULL AND due_date < ${TODAY})::int AS overdue
                FROM library_loans`,
+          )
+        ).rows[0];
+      }
+
+      if (p.has("transport.manage")) {
+        out.transport = (
+          await db.query(
+            `SELECT (SELECT count(*)::int FROM transport_routes) AS routes, (SELECT count(*)::int FROM transport_assignments) AS riders,
+                    (SELECT count(*)::int FROM transport_vehicles WHERE status = 'active') AS vehicles`,
+          )
+        ).rows[0];
+      }
+
+      if (p.has("hostel.manage")) {
+        out.hostel = (
+          await db.query(
+            `SELECT (SELECT COALESCE(sum(capacity), 0)::int FROM hostel_rooms) AS beds,
+                    (SELECT count(*)::int FROM hostel_allocations WHERE end_date IS NULL) AS occupied,
+                    (SELECT count(*)::int FROM hostels) AS hostels`,
           )
         ).rows[0];
       }

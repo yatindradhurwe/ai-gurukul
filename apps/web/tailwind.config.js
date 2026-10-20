@@ -4,7 +4,6 @@ const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
 
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
-  darkMode: "class",
   theme: {
     extend: {
       colors: {
@@ -12,7 +11,7 @@ export default {
         brand: { DEFAULT: v("brand"), soft: "rgb(var(--brand) / 0.1)", strong: v("brand-strong") },
         accent: v("accent"),
         surface: { DEFAULT: v("surface"), raised: v("surface-raised") },
-        // Neutral scale is themeable so every page follows light/dark mode.
+        // Neutral scale is defined as CSS variables (see index.css).
         slate: Object.fromEntries(shades.map((s) => [s, v(`slate-${s}`)])),
       },
       fontFamily: {
