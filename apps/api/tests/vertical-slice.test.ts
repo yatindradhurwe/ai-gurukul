@@ -59,6 +59,14 @@ describe.skipIf(!dbAvailable)("vertical slice: one student, one lesson, one exam
     expect(overview.subjects[0].chapters).toHaveLength(6);
     const lessons = overview.subjects.flatMap((s: any) => s.chapters.flatMap((c: any) => c.topics.flatMap((t: any) => t.lessons)));
     expect(lessons.find((l: any) => l.id === lessonId).status).toBe("in_progress");
+
+    // The catalog lists each class's subjects as courses; opening one narrows the overview to that subject.
+    const catalog = (await api.get(student, "/api/v1/curriculum/catalog").expect(200)).body;
+    const science = catalog.courses.find((c: any) => c.subjectId === scienceId);
+    expect(science).toMatchObject({ mine: true, chapters: 6, completedLessons: 0 });
+    expect(science.lessons).toBeGreaterThan(0);
+    const one = (await api.get(student, `/api/v1/curriculum/overview?curriculumVersionId=${science.curriculumVersionId}&subjectId=${scienceId}`).expect(200)).body;
+    expect(one.subjects.map((s: any) => s.id)).toEqual([scienceId]);
   });
 
   it("3. answers a question grounded in approved content, with citations", async () => {

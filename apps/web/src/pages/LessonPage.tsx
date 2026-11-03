@@ -64,7 +64,7 @@ export function LessonPage() {
 
   return (
     <div className="space-y-5">
-      <Link to="/learn" className="text-sm text-slate-500 hover:text-slate-800">
+      <Link to={`/learn/course/${l.curriculum_version_id}/${l.subject_id}`} className="text-sm text-slate-500 hover:text-slate-800">
         ← {l.subject} · {l.chapter}
       </Link>
       <h1 className="text-2xl font-semibold">{l.title}</h1>

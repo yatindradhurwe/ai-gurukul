@@ -33,6 +33,7 @@ import { RewardsPage } from "./pages/RewardsPage";
 import { TransportPage } from "./pages/TransportPage";
 import { GradebookPage } from "./pages/GradebookPage";
 import { JoinPage } from "./pages/JoinPage";
+import { CoursePage } from "./pages/CoursePage";
 import { LearnPage } from "./pages/LearnPage";
 import { LessonPage } from "./pages/LessonPage";
 import { ParentPage } from "./pages/ParentPage";
@@ -79,6 +80,7 @@ function App() {
         <Route index element={home} />
         <Route path="today" element={<Guard any={["planner.self"]} what="the study day"><StudentHome /></Guard>} />
         <Route path="learn" element={<LearnPage />} />
+        <Route path="learn/course/:versionId/:subjectId" element={<CoursePage />} />
         <Route path="learn/lessons/:id" element={<LessonPage />} />
         <Route path="tutor" element={<Guard any={["tutor.use"]} what="the AI teacher"><TutorPage /></Guard>} />
         <Route path="classes" element={<Guard any={CLASSROOM} what="live classes"><ClassesPage /></Guard>} />

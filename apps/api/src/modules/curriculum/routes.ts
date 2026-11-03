@@ -93,7 +93,7 @@ curriculumRouter.get(
 curriculumRouter.get(
   "/overview",
   asyncHandler(async (req, res) => {
-    const q = parse(z.object({ curriculumVersionId: z.string().uuid().optional() }), req.query);
+    const q = parse(z.object({ curriculumVersionId: z.string().uuid().optional(), subjectId: z.string().uuid().optional() }), req.query);
     const tenant = requireTenant(req);
     const data = await withTenant(tenant.id, async (db) => {
       const student = tenant.studentProfileId ? await resolveStudent(req, db).catch(() => null) : null;
@@ -113,9 +113,9 @@ curriculumRouter.get(
                     WHERE l.topic_id = t.id AND l.status = 'published') AS lessons,
                   (SELECT m.score FROM topic_mastery_history m WHERE m.topic_id = t.id AND m.student_id = $2 ORDER BY m.created_at DESC LIMIT 1) AS mastery
              FROM chapters c JOIN subjects s ON s.id = c.subject_id LEFT JOIN topics t ON t.chapter_id = c.id
-            WHERE ($1::uuid IS NULL OR c.curriculum_version_id = $1)
+            WHERE ($1::uuid IS NULL OR c.curriculum_version_id = $1) AND ($3::uuid IS NULL OR c.subject_id = $3)
             ORDER BY s.name, c.sequence, t.sequence`,
-          [cv, student?.id ?? null],
+          [cv, student?.id ?? null, q.subjectId ?? null],
         )
       ).rows;
       const subjects: any[] = [];
@@ -136,6 +136,57 @@ curriculumRouter.get(
   }),
 );
 
+/**
+ * Every course on offer — one per class (approved curriculum version) and
+ * subject — with chapter/topic/lesson counts, for the Courses catalog. A
+ * student's own class is flagged and carries their lesson progress.
+ */
+curriculumRouter.get(
+  "/catalog",
+  asyncHandler(async (req, res) => {
+    const tenant = requireTenant(req);
+    const data = await withTenant(tenant.id, async (db) => {
+      const student = tenant.studentProfileId ? await resolveStudent(req, db).catch(() => null) : null;
+      const rows = (
+        await db.query(
+          `SELECT cv.id AS curriculum_version_id, b.name AS board, g.name AS grade, g.sequence AS grade_seq, cv.academic_year,
+                  s.id AS subject_id, s.name AS subject, s.code,
+                  count(DISTINCT c.id)::int AS chapters, count(DISTINCT t.id)::int AS topics,
+                  count(DISTINCT l.id)::int AS lessons,
+                  count(DISTINCT lp.lesson_id) FILTER (WHERE lp.status = 'completed')::int AS completed_lessons
+             FROM curriculum_versions cv
+             JOIN boards b ON b.id = cv.board_id JOIN grades g ON g.id = cv.grade_id
+             JOIN chapters c ON c.curriculum_version_id = cv.id JOIN subjects s ON s.id = c.subject_id
+             LEFT JOIN topics t ON t.chapter_id = c.id
+             LEFT JOIN lessons l ON l.topic_id = t.id AND l.status = 'published'
+             LEFT JOIN lesson_progress lp ON lp.lesson_id = l.id AND lp.student_id = $1
+            WHERE cv.approval_status = 'approved'
+            GROUP BY cv.id, b.name, g.name, g.sequence, cv.academic_year, s.id, s.name, s.code
+            ORDER BY g.sequence, b.name, s.name`,
+          [student?.id ?? null],
+        )
+      ).rows;
+      // Minutes summed separately: the lesson join above repeats topic rows.
+      const minutes = (
+        await db.query(
+          `SELECT c.curriculum_version_id, c.subject_id, COALESCE(sum(t.estimated_minutes), 0)::int AS minutes
+             FROM chapters c JOIN topics t ON t.chapter_id = c.id GROUP BY c.curriculum_version_id, c.subject_id`,
+        )
+      ).rows;
+      const courses = rows.map((r) => ({
+        curriculumVersionId: r.curriculum_version_id, board: r.board, grade: r.grade, gradeSequence: r.grade_seq, academicYear: r.academic_year,
+        subjectId: r.subject_id, subject: r.subject, code: r.code,
+        chapters: r.chapters, topics: r.topics, lessons: r.lessons,
+        minutes: minutes.find((m) => m.curriculum_version_id === r.curriculum_version_id && m.subject_id === r.subject_id)?.minutes ?? 0,
+        mine: !!student && student.curriculumVersionId === r.curriculum_version_id,
+        completedLessons: student ? r.completed_lessons : null,
+      }));
+      return { tracksProgress: !!student, courses };
+    });
+    res.json(data);
+  }),
+);
+
 export const coursesRouter = Router();
 
 coursesRouter.get(
@@ -146,7 +197,7 @@ coursesRouter.get(
     const data = await withTenant(tenant.id, async (db) => {
       const lesson = (
         await db.query(
-          `SELECT l.id, l.title, l.content, l.version, l.topic_id, t.title AS topic, c.id AS chapter_id, c.title AS chapter, s.name AS subject
+          `SELECT l.id, l.title, l.content, l.version, l.topic_id, t.title AS topic, c.id AS chapter_id, c.title AS chapter, c.curriculum_version_id, c.subject_id, s.name AS subject
              FROM lessons l JOIN topics t ON t.id = l.topic_id JOIN chapters c ON c.id = t.chapter_id JOIN subjects s ON s.id = c.subject_id
             WHERE l.id = $1 AND (l.status = 'published' OR $2)`,
           [req.params.id, tenant.permissions.has("content.manage") || tenant.permissions.has("content.review")],
